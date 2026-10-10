@@ -1,0 +1,72 @@
+/* MRISafe Twin shared colour tokens. Dark is the default; light is set by data-theme="light"
+ * on <html> (theme.js). Pages keep their own dark token values in :root; the light block
+ * below uses a higher-specificity selector, so it wins regardless of load order. */
+
+:root {
+  /* extra surfaces used by every page (dark values) */
+  --well: #0a121c;
+  --bg-deep: #071019;
+  --header-grad: linear-gradient(180deg, #0b1320, #08101a);
+  --card-grad: linear-gradient(160deg, #10243a, #0d1826 60%);
+  --stage-grad: radial-gradient(120% 90% at 50% 10%, #12233a 0%, #08111c 60%, #060b12 100%);
+  --glass: rgba(12, 20, 32, 0.82);
+  --glass-strong: rgba(6, 12, 20, 0.92);
+  --tag-bg: rgba(8, 15, 25, 0.82);
+  --overlay: rgba(4, 8, 13, 0.72);
+  --toast-bg: #0f1c2b;
+  --hint-bg: rgba(10, 22, 34, 0.9);
+  --hint-text: #ffe2b0;
+  --ok-text: #9fe6c6;
+  --warn-text: #ffd9a3;
+  --scene-bg: #070c14;
+  --shadow: rgba(0, 0, 0, 0.45);
+  --text-soft: #c2d0de;
+  --card-top: #10243a;
+  --rule-text: #ffb3bb;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eef2f6;
+  --panel: #ffffff;
+  --raised: #f5f8fb;
+  --raised-2: #e6edf5;
+  --line: rgba(20, 50, 80, 0.12);
+  --line-strong: rgba(20, 50, 80, 0.26);
+  --text: #13212f;
+  --muted: #4f6478;
+  --faint: #76889c;
+  --cyan: #0a7790;
+  --cyan-dim: rgba(10, 119, 144, 0.10);
+  --blue: #2f64d6;
+  --ok: #17845a;
+  --ok-dim: rgba(23, 132, 90, 0.11);
+  --warn: #9c6400;
+  --warn-dim: rgba(156, 100, 0, 0.12);
+  --bad: #c4283a;
+  --bad-dim: rgba(196, 40, 58, 0.10);
+
+  --well: #e7eef5;
+  --bg-deep: #dde6ee;
+  --header-grad: linear-gradient(180deg, #ffffff, #f1f5f9);
+  --card-grad: linear-gradient(160deg, #e2f1f6, #f7fbfd 60%);
+  --stage-grad: radial-gradient(120% 90% at 50% 10%, #ffffff 0%, #e6edf4 65%, #d9e3ec 100%);
+  --glass: rgba(255, 255, 255, 0.9);
+  --glass-strong: rgba(255, 255, 255, 0.96);
+  --tag-bg: rgba(255, 255, 255, 0.92);
+  --overlay: rgba(30, 45, 60, 0.35);
+  --toast-bg: #ffffff;
+  --hint-bg: rgba(255, 250, 240, 0.97);
+  --hint-text: #6b4300;
+  --ok-text: #0d6a45;
+  --warn-text: #7a4d00;
+  --scene-bg: #e4ebf2;
+  --shadow: rgba(20, 40, 60, 0.18);
+  --text-soft: #3b4f63;
+  --card-top: #e2f1f6;
+  --rule-text: #a3202f;
+}
+
+/* Replace-the-dark-literal helpers used in the page CSS */
+:root[data-theme="light"] .brand h1 span { color: var(--cyan); }
+:root[data-theme="light"] .pad .pname { color: #f3dccb; }
