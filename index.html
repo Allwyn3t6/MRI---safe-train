@@ -1,0 +1,2805 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MRISafe Twin</title>
+<meta name="description" content="MRI safety trainer and 3D scanner explorer with an ESP32-S3 handheld controller and an offline coach.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* MRISafe Twin shared colour tokens. Dark is the default; light is set by data-theme="light"
+ * on <html> (theme.js). Pages keep their own dark token values in :root; the light block
+ * below uses a higher-specificity selector, so it wins regardless of load order. */
+
+:root {
+  /* extra surfaces used by every page (dark values) */
+  --well: #0a121c;
+  --bg-deep: #071019;
+  --header-grad: linear-gradient(180deg, #0b1320, #08101a);
+  --card-grad: linear-gradient(160deg, #10243a, #0d1826 60%);
+  --stage-grad: radial-gradient(120% 90% at 50% 10%, #12233a 0%, #08111c 60%, #060b12 100%);
+  --glass: rgba(12, 20, 32, 0.82);
+  --glass-strong: rgba(6, 12, 20, 0.92);
+  --tag-bg: rgba(8, 15, 25, 0.82);
+  --overlay: rgba(4, 8, 13, 0.72);
+  --toast-bg: #0f1c2b;
+  --hint-bg: rgba(10, 22, 34, 0.9);
+  --hint-text: #ffe2b0;
+  --ok-text: #9fe6c6;
+  --warn-text: #ffd9a3;
+  --scene-bg: #070c14;
+  --shadow: rgba(0, 0, 0, 0.45);
+  --text-soft: #c2d0de;
+  --card-top: #10243a;
+  --rule-text: #ffb3bb;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eef2f6;
+  --panel: #ffffff;
+  --raised: #f5f8fb;
+  --raised-2: #e6edf5;
+  --line: rgba(20, 50, 80, 0.12);
+  --line-strong: rgba(20, 50, 80, 0.26);
+  --text: #13212f;
+  --muted: #4f6478;
+  --faint: #76889c;
+  --cyan: #0a7790;
+  --cyan-dim: rgba(10, 119, 144, 0.10);
+  --blue: #2f64d6;
+  --ok: #17845a;
+  --ok-dim: rgba(23, 132, 90, 0.11);
+  --warn: #9c6400;
+  --warn-dim: rgba(156, 100, 0, 0.12);
+  --bad: #c4283a;
+  --bad-dim: rgba(196, 40, 58, 0.10);
+
+  --well: #e7eef5;
+  --bg-deep: #dde6ee;
+  --header-grad: linear-gradient(180deg, #ffffff, #f1f5f9);
+  --card-grad: linear-gradient(160deg, #e2f1f6, #f7fbfd 60%);
+  --stage-grad: radial-gradient(120% 90% at 50% 10%, #ffffff 0%, #e6edf4 65%, #d9e3ec 100%);
+  --glass: rgba(255, 255, 255, 0.9);
+  --glass-strong: rgba(255, 255, 255, 0.96);
+  --tag-bg: rgba(255, 255, 255, 0.92);
+  --overlay: rgba(30, 45, 60, 0.35);
+  --toast-bg: #ffffff;
+  --hint-bg: rgba(255, 250, 240, 0.97);
+  --hint-text: #6b4300;
+  --ok-text: #0d6a45;
+  --warn-text: #7a4d00;
+  --scene-bg: #e4ebf2;
+  --shadow: rgba(20, 40, 60, 0.18);
+  --text-soft: #3b4f63;
+  --card-top: #e2f1f6;
+  --rule-text: #a3202f;
+}
+
+/* Replace-the-dark-literal helpers used in the page CSS */
+:root[data-theme="light"] .brand h1 span { color: var(--cyan); }
+:root[data-theme="light"] .pad .pname { color: #f3dccb; }
+
+</style>
+<script>
+/* MRISafe Twin theme switch: dark (default) or light, shared by the shell and both modules.
+ * The choice is stored in this browser only (localStorage). Other same-origin frames pick it
+ * up through the storage event, and every page listens for the 'mrisafe-theme' event so
+ * the 3D scene can repaint its background. */
+(function () {
+  const KEY = 'mrisafe-theme';
+  const root = document.documentElement;
+
+  function stored() {
+    try { return localStorage.getItem(KEY); } catch (e) { return null; }
+  }
+  function save(v) {
+    try { localStorage.setItem(KEY, v); } catch (e) { /* storage blocked: theme still applies for this page */ }
+  }
+  function current() { return stored() === 'light' ? 'light' : 'dark'; }
+
+  function paintButtons(v) {
+    document.querySelectorAll('[data-theme-toggle]').forEach(b => {
+      b.textContent = v === 'dark' ? 'Light' : 'Dark';
+      b.setAttribute('aria-pressed', String(v === 'light'));
+      b.title = v === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme';
+    });
+  }
+
+  function apply(v) {
+    root.setAttribute('data-theme', v);
+    root.style.colorScheme = v;
+    paintButtons(v);
+    window.dispatchEvent(new CustomEvent('mrisafe-theme', { detail: v }));
+  }
+
+  function set(v) { save(v); apply(v); }
+  function toggle() { set(current() === 'dark' ? 'light' : 'dark'); }
+
+  window.MRITheme = { get: current, set, toggle };
+  apply(current());
+  document.addEventListener('DOMContentLoaded', () => paintButtons(current()));
+  window.addEventListener('storage', e => { if (e.key === KEY) apply(current()); });
+  document.addEventListener('click', e => {
+    const b = e.target.closest && e.target.closest('[data-theme-toggle]');
+    if (b) toggle();
+  });
+})();
+
+</script>
+<style>
+/* Layout: one console — shared header (modes, controller, assistant), a stage that hosts Train or Learn, and a dockable assistant. Single dark theme by design. */
+:root {
+  color-scheme: dark;
+  --bg: #070c14;
+  --panel: #0c1420;
+  --raised: #121d2c;
+  --raised-2: #182637;
+  --line: rgba(130, 180, 230, 0.13);
+  --line-strong: rgba(130, 190, 240, 0.26);
+  --text: #dbe6f1;
+  --muted: #8297ad;
+  --faint: #56697e;
+  --cyan: #45d6ec;
+  --cyan-dim: rgba(69, 214, 236, 0.14);
+  --ok: #3fd99a;
+  --ok-dim: rgba(63, 217, 154, 0.13);
+  --warn: #f4b549;
+  --warn-dim: rgba(244, 181, 73, 0.13);
+  --bad: #ff5f6f;
+  --bad-dim: rgba(255, 95, 111, 0.14);
+  --copper: #d08a5a;
+  --copper-hi: #f1b689;
+  --violet: #b28cff;
+  --f-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --r: 12px;
+  --drawer: 392px;
+}
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 var(--f-body); -webkit-font-smoothing: antialiased; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+img, svg { max-width: 100%; }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; border-radius: 6px; }
+h1, h2, h3 { margin: 0; font-family: var(--f-display); text-wrap: balance; }
+p { margin: 0; }
+.eyebrow { font-family: var(--f-mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.mono { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+.kbd { font: 11px var(--f-mono); padding: 1px 6px; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 5px; color: var(--muted); white-space: nowrap; }
+.pad-chip { display: inline-grid; place-items: center; min-width: 28px; height: 22px; padding: 0 6px; border-radius: 6px; font: 600 11px var(--f-mono); color: var(--copper-hi); background: linear-gradient(145deg, #3a2618, #241810); border: 1px solid rgba(208,138,90,.5); }
+
+.app { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100%; min-height: 560px; }
+
+/* ---------- header ---------- */
+header.top { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--header-grad); min-width: 0; }
+.brand { display: flex; align-items: center; gap: 10px; background: none; border: none; padding: 0; cursor: pointer; }
+.brand h1 { font-size: 17px; font-weight: 750; font-stretch: 112%; white-space: nowrap; }
+.brand h1 span { color: var(--cyan); }
+nav.modes { display: flex; gap: 3px; padding: 3px; border-radius: 11px; background: var(--raised); border: 1px solid var(--line); margin-left: 6px; }
+nav.modes button { border: none; background: transparent; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 650; color: var(--muted); display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+nav.modes button[aria-current="page"] { background: var(--cyan-dim); color: var(--cyan); }
+nav.modes button:hover { color: var(--text); }
+.spacer { flex: 1; }
+.chipbtn { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--raised); cursor: pointer; font-size: 12.5px; white-space: nowrap; max-width: 300px; }
+.chipbtn:hover { background: var(--raised-2); }
+.chipbtn .t { overflow: hidden; text-overflow: ellipsis; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; box-shadow: 0 0 0 3px rgba(255,255,255,.04); }
+[data-tone="ok"] .dot { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-dim); }
+[data-tone="warn"] .dot { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-dim); }
+[data-tone="bad"] .dot { background: var(--bad); box-shadow: 0 0 0 3px var(--bad-dim); }
+[data-tone="busy"] .dot { background: var(--cyan); animation: blink 1s infinite; }
+[data-tone="ai"] .dot { background: var(--violet); box-shadow: 0 0 0 3px rgba(178,140,255,.18); }
+@keyframes blink { 50% { opacity: .25; } }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 34px; padding: 0 14px; border-radius: 9px; border: 1px solid var(--line-strong); background: var(--raised); cursor: pointer; font-size: 13px; font-weight: 600; white-space: nowrap; transition: background .15s, border-color .15s; text-decoration: none; }
+.btn:hover { background: var(--raised-2); border-color: rgba(130,190,240,.4); }
+.btn.primary { background: linear-gradient(180deg, #2bb8d0, #1f93ad); border-color: #4fd8ee; color: #04121a; }
+.btn.primary:hover { background: linear-gradient(180deg, #3ccbe2, #22a1bc); }
+.btn.small { height: 28px; padding: 0 10px; font-size: 12px; }
+.btn.icon { width: 34px; padding: 0; }
+.btn[aria-pressed="true"] { border-color: var(--cyan); color: var(--cyan); background: var(--cyan-dim); }
+.btn[disabled] { opacity: .45; cursor: not-allowed; }
+
+/* ---------- body ---------- */
+.body { display: grid; grid-template-columns: minmax(0, 1fr) 0; min-height: 0; }
+.body.drawer-open { grid-template-columns: minmax(0, 1fr) var(--drawer); }
+.stage { position: relative; min-height: 0; min-width: 0; }
+.stage iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--bg); }
+
+/* ---------- home ---------- */
+.home { position: absolute; inset: 0; overflow: auto; padding: 28px 24px 32px; }
+.home-inner { max-width: 1120px; margin: 0 auto; display: grid; gap: 22px; }
+.hero { display: grid; gap: 8px; }
+.hero h2 { font-size: clamp(26px, 3.4vw, 40px); font-weight: 780; font-stretch: 116%; line-height: 1.08; letter-spacing: -.01em; }
+.hero h2 em { font-style: normal; color: var(--cyan); }
+.hero p { max-width: 68ch; color: var(--text-soft); font-size: 15.5px; }
+.modes-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.mode-card { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: 16px; padding: 20px; border-radius: 16px; background: linear-gradient(155deg, var(--card-top) 0%, var(--panel) 70%); border: 1px solid var(--line-strong); text-align: left; cursor: pointer; overflow: hidden; transition: border-color .2s, transform .2s; }
+.mode-card:hover { border-color: rgba(69,214,236,.6); transform: translateY(-2px); }
+.mode-card h3 { font-size: 21px; font-weight: 750; font-stretch: 110%; margin: 4px 0 6px; }
+.mode-card p { color: var(--text-soft); font-size: 13.5px; }
+.mode-card ul { margin: 10px 0 14px; padding-left: 18px; color: var(--muted); font-size: 12.8px; display: grid; gap: 3px; }
+.mode-card .go { display: inline-flex; gap: 8px; align-items: center; font-weight: 700; color: var(--cyan); font-size: 13.5px; }
+.mode-card .art { align-self: center; }
+.ready { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.step { display: grid; gap: 8px; align-content: start; padding: 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); }
+.step .h { display: flex; align-items: center; gap: 10px; }
+.step .n { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; font: 600 12px var(--f-mono); background: var(--raised); border: 1px solid var(--line-strong); color: var(--muted); flex: none; }
+.step[data-tone="ok"] .n { background: var(--ok); color: #04150d; border-color: var(--ok); }
+.step[data-tone="warn"] .n { background: var(--warn); color: #241600; border-color: var(--warn); }
+.step b { font-size: 14px; }
+.step p { font-size: 12.8px; color: var(--muted); }
+.step .row { display: flex; gap: 6px; flex-wrap: wrap; }
+.cheat { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.cheat > div { padding: 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); display: grid; gap: 8px; align-content: start; }
+.cheat table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.cheat td { padding: 4px 0; vertical-align: top; }
+.cheat td:first-child { width: 96px; color: var(--muted); }
+.disclaimer { font-size: 12px; color: var(--faint); max-width: 90ch; }
+
+/* ---------- drawer (assistant) ---------- */
+.drawer { min-width: 0; min-height: 0; overflow: hidden; border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; }
+.drawer-h { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.drawer-h h2 { font-size: 15px; font-weight: 720; }
+.ai-status { font-size: 11.5px; color: var(--muted); }
+.msgs { flex: 1; min-height: 0; overflow: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; scrollbar-width: thin; scrollbar-color: #24364b transparent; }
+.msg { max-width: 92%; padding: 10px 12px; border-radius: 12px; font-size: 13.2px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg.user { align-self: flex-end; background: var(--cyan-dim); border: 1px solid rgba(69,214,236,.35); }
+.msg.bot { align-self: flex-start; background: var(--raised); border: 1px solid var(--line); }
+.msg .meta { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; font: 600 10px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); white-space: normal; }
+.msg .badge { padding: 1px 6px; border-radius: 5px; }
+.badge.gen { background: rgba(178,140,255,.16); color: var(--violet); }
+.badge.built { background: #1d2a3a; color: var(--muted); }
+.badge.warn { background: var(--warn-dim); color: var(--warn); }
+.rulechip { display: inline-block; font: 600 11px var(--f-mono); padding: 0 5px; border-radius: 4px; background: rgba(255,95,111,.12); color: var(--rule-text); }
+.typing { display: inline-flex; gap: 4px; }
+.typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: bob 1s infinite; }
+.typing i:nth-child(2) { animation-delay: .15s; } .typing i:nth-child(3) { animation-delay: .3s; }
+@keyframes bob { 50% { transform: translateY(-4px); opacity: .5; } }
+.quick { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px 0; }
+.quick button { border: 1px solid var(--line-strong); background: var(--raised); border-radius: 999px; padding: 5px 11px; font-size: 12.3px; cursor: pointer; }
+.quick button:hover { border-color: var(--violet); color: var(--text); }
+form.ask { display: flex; gap: 6px; padding: 10px 14px 14px; }
+form.ask input { flex: 1; min-width: 0; height: 38px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--raised); padding: 0 12px; }
+.drawer-note { padding: 0 14px 12px; font-size: 11.5px; color: var(--faint); }
+
+/* ---------- popover (device) ---------- */
+.pop { position: fixed; z-index: 40; top: 56px; right: 14px; width: min(440px, calc(100% - 28px)); max-height: calc(100% - 72px); overflow: auto; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 14px; box-shadow: 0 24px 60px rgba(0,0,0,.55); padding: 16px; display: grid; gap: 14px; }
+.pop h3 { font-size: 15px; font-weight: 720; }
+.sec { display: grid; gap: 8px; }
+.kv { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 4px 10px; font-size: 12.8px; }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; }
+.seg { display: inline-flex; padding: 3px; gap: 3px; border-radius: 9px; background: var(--raised); border: 1px solid var(--line); flex-wrap: wrap; }
+.seg button { border: none; background: transparent; padding: 5px 11px; border-radius: 6px; cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.seg button[aria-pressed="true"] { background: var(--cyan-dim); color: var(--cyan); }
+.seg button[disabled] { opacity: .4; cursor: not-allowed; }
+.tilt { display: grid; grid-template-columns: 120px minmax(0,1fr); gap: 14px; align-items: center; }
+.tilt svg { width: 120px; height: 120px; }
+.meter { height: 10px; border-radius: 5px; background: var(--raised-2); overflow: hidden; }
+.meter i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--ok), var(--warn), var(--bad)); border-radius: 5px; transition: width .15s; }
+.padgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.padgrid div { padding: 6px 8px; border-radius: 8px; background: linear-gradient(150deg, #2b1c12, #1a120c); border: 1px solid rgba(208,138,90,.42); font-size: 11.5px; color: #f3dccb; transition: box-shadow .2s; min-width: 0; }
+.padgrid div b { display: block; font: 600 11px var(--f-mono); color: var(--copper-hi); }
+.padgrid div.hit { box-shadow: 0 0 0 2px var(--cyan), 0 0 18px rgba(69,214,236,.5); }
+.note { font-size: 12px; color: var(--muted); }
+
+/* ---------- help modal ---------- */
+.modal { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: var(--overlay); backdrop-filter: blur(5px); padding: 16px; }
+.modal-card { width: min(860px, 100%); max-height: calc(100% - 32px); overflow: auto; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 16px; padding: 22px; display: grid; gap: 16px; }
+.modal-card h2 { font-size: 21px; font-weight: 760; font-stretch: 110%; }
+.help-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.help-grid > div { padding: 12px; border-radius: 10px; background: var(--raised); border: 1px solid var(--line); display: grid; gap: 6px; align-content: start; }
+.help-grid table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.help-grid td { padding: 4px 6px 4px 0; vertical-align: top; border-bottom: 1px solid var(--line); }
+.help-grid tr:last-child td { border-bottom: none; }
+.help-grid td:first-child { white-space: nowrap; }
+ol.howto { margin: 0; padding-left: 20px; display: grid; gap: 4px; font-size: 13px; }
+
+.toast-host { position: fixed; z-index: 60; left: 50%; bottom: 18px; transform: translateX(-50%); display: grid; gap: 8px; width: min(440px, calc(100% - 32px)); pointer-events: none; }
+.toast { pointer-events: auto; padding: 10px 14px; border-radius: 10px; background: var(--toast-bg); border: 1px solid var(--line-strong); font-size: 13px; box-shadow: 0 10px 30px rgba(0,0,0,.45); }
+.toast.warn { border-color: rgba(244,181,73,.6); } .toast.bad { border-color: rgba(255,95,111,.6); } .toast.ok { border-color: rgba(63,217,154,.55); }
+
+@media (max-width: 1100px) { .ready, .cheat { grid-template-columns: minmax(0, 1fr); } .chipbtn { max-width: 190px; } }
+@media (max-width: 900px) {
+  .body.drawer-open { grid-template-columns: minmax(0, 1fr) 0; }
+  .drawer { position: fixed; z-index: 45; inset: 56px 0 0 auto; width: min(420px, 100%); box-shadow: -20px 0 60px rgba(0,0,0,.5); }
+  .body:not(.drawer-open) .drawer { display: none; }
+  .modes-grid, .help-grid { grid-template-columns: minmax(0, 1fr); }
+  .mode-card { grid-template-columns: minmax(0, 1fr); } .mode-card .art { display: none; }
+  .brand h1 { display: none; }
+}
+@media (max-width: 600px) {
+  header.top { flex-wrap: wrap; }
+  nav.modes { order: 3; width: 100%; margin: 0; justify-content: space-between; }
+  .chipbtn .t { display: none; }
+  .home { padding: 18px 16px 24px; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+.hand-card { position: fixed; left: 14px; bottom: 14px; z-index: 35; width: 224px; padding: 10px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line-strong); box-shadow: 0 12px 30px var(--shadow); display: grid; gap: 8px; }
+.hand-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.hand-status { font-size: 11.5px; color: var(--muted); text-align: right; }
+.hand-card canvas { width: 100%; height: auto; border-radius: 8px; background: var(--well); }
+.hand-help { margin: 0; font-size: 11.5px; line-height: 1.4; color: var(--muted); }
+.hand-card .btn { justify-self: start; }
+.hand-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.hand-tools .btn { justify-self: stretch; height: 28px; padding: 0 6px; font-size: 12px; }
+.hand-tools .btn[aria-pressed="true"] { border-color: var(--cyan); color: var(--cyan); }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <button class="brand" id="brand" type="button" aria-label="MRISafe Twin home">
+      <svg width="32" height="32" viewBox="0 0 34 34" aria-hidden="true"><rect x="1" y="3" width="32" height="28" rx="9" fill="#e9eef3"/><circle cx="17" cy="16" r="8.5" fill="#1b2633"/><circle cx="17" cy="16" r="9.6" fill="none" stroke="#45d6ec" stroke-width="1.2"/><circle cx="17" cy="16" r="5" fill="#0a1018"/></svg>
+      <h1>MRISafe <span>Twin</span></h1>
+    </button>
+    <nav class="modes" aria-label="Modes">
+      <button type="button" data-mode="home" aria-current="page">Home</button>
+      <button type="button" data-mode="train">Train</button>
+      <button type="button" data-mode="learn">Learn</button>
+    </nav>
+    <div class="spacer"></div>
+    <button class="chipbtn" id="dev-chip" type="button" data-tone="off" aria-haspopup="dialog" aria-expanded="false" title="Controller"><span class="dot"></span><span class="t" id="dev-text">Controller not connected</span></button>
+    <button class="chipbtn" id="ai-chip" type="button" data-tone="off" aria-expanded="false" title="Coach"><span class="dot"></span><span class="t" id="ai-text">Coach</span></button>
+    <button class="btn small" id="hand-btn" type="button" aria-pressed="false" title="Control the 3D view with your hand. The camera image never leaves this computer.">Hand control</button>
+    <button class="btn small" type="button" data-theme-toggle aria-pressed="false">Light</button>
+    <button class="btn icon" id="help-btn" type="button" aria-label="Help and controls" title="Help (?)">?</button>
+  </header>
+
+  <div class="body" id="body">
+    <div class="stage" id="stage">
+      <!-- HOME -->
+      <section class="home" id="home" aria-label="Home">
+        <div class="home-inner">
+          <div class="hero">
+            <div class="eyebrow">Biomedical engineering · MRI safety and hardware</div>
+            <h2>Practise MRI safety. <em>See inside the scanner.</em></h2>
+            <p>Two linked modules in one place. Train a pre-scan safety check with a rule-based assessor, then open up the scanner to see how the magnet, coils and physics produce an image. A handheld ESP32-S3 controller and an offline coach work in both.</p>
+          </div>
+
+          <div class="modes-grid">
+            <button class="mode-card" type="button" data-go="train">
+              <div>
+                <div class="eyebrow">Mode 1 · Train</div>
+                <h3>Pre-scan safety drill</h3>
+                <p>Prepare a patient for MRI in a 3D suite. Touch a pad to sign off each check; the assessor verifies it against what you actually did.</p>
+                <ul><li>Screening, equipment, Zone IV access, clearance</li><li>Mistakes explained with the rule and the evidence</li><li>Adaptive next scenario and a trainer report</li></ul>
+                <span class="go">Start training →</span>
+              </div>
+              <svg class="art" viewBox="0 0 150 130" aria-hidden="true">
+                <rect x="6" y="16" width="96" height="92" rx="26" fill="#e9eef3"/><circle cx="54" cy="62" r="26" fill="#1b2633"/><circle cx="54" cy="62" r="29" fill="none" stroke="#45d6ec" stroke-width="2"/><circle cx="54" cy="62" r="16" fill="#0a1018"/>
+                <rect x="40" y="70" width="104" height="10" rx="4" fill="#cfd8e1"/>
+                <g transform="translate(118 18)"><circle cx="13" cy="13" r="12" fill="#fff" stroke="#d7263d" stroke-width="3"/><text x="13" y="17" text-anchor="middle" font-family="Archivo,Arial" font-weight="800" font-size="9" fill="#111">MR</text><path d="M5 5 L21 21" stroke="#d7263d" stroke-width="3"/></g>
+              </svg>
+            </button>
+            <button class="mode-card" type="button" data-go="learn">
+              <div>
+                <div class="eyebrow">Mode 2 · Learn</div>
+                <h3>Inside the scanner</h3>
+                <p>A 3D cutaway you can peel layer by layer: magnet, cryostat, shims, gradients and RF coils, then spins, contrast, slice selection, k-space and quench.</p>
+                <ul><li>14 interactive chapters with live physics</li><li>Real Larmor, slice and FFT calculations</li><li>Ask the coach about any chapter</li></ul>
+                <span class="go">Start learning →</span>
+              </div>
+              <svg class="art" viewBox="0 0 150 130" aria-hidden="true">
+                <g fill="none" stroke-width="7"><circle cx="70" cy="65" r="56" stroke="#a5b0bb"/><circle cx="70" cy="65" r="45" stroke="#d7dde3"/><circle cx="70" cy="65" r="36" stroke="#d08a5a"/><circle cx="70" cy="65" r="27" stroke="#6d8f83"/><circle cx="70" cy="65" r="19" stroke="#e8a273" stroke-width="3"/></g>
+                <path d="M70 65 L126 65 A56 56 0 0 0 70 9 Z" fill="#070c14"/>
+                <path d="M70 65 L70 22" stroke="#45d6ec" stroke-width="3"/><path d="M64 28 L70 18 L76 28 Z" fill="#45d6ec"/>
+              </svg>
+            </button>
+          </div>
+
+          <div>
+            <div class="eyebrow" style="margin-bottom:8px">Before you start</div>
+            <div class="ready">
+              <div class="step" id="st-dev" data-tone="off"><div class="h"><span class="n">1</span><b>Handheld controller</b></div><p id="st-dev-p">Optional. Connect the ESP32-S3 with the six pads and the MPU9250. Without it, use the mouse and keys 1–6.</p><div class="row"><button class="btn small primary" type="button" id="st-dev-btn">Connect controller</button></div></div>
+              <div class="step" id="st-ai" data-tone="off"><div class="h"><span class="n">2</span><b>Coach and tutor</b></div><p id="st-ai-p">Checking…</p><div class="row"><button class="btn small" type="button" id="st-ai-btn">Open assistant</button></div></div>
+              <div class="step" id="st-br" data-tone="off"><div class="h"><span class="n">3</span><b>Browser</b></div><p id="st-br-p">Checking…</p></div>
+            </div>
+          </div>
+
+          <div>
+            <div class="eyebrow" style="margin-bottom:8px">Controls at a glance</div>
+            <div class="cheat">
+              <div><b>Touch pads</b><table id="cheat-pads"></table></div>
+              <div><b>Controller motion</b><table>
+                <tr><td>Tilt</td><td>Orbit the 3D view (or move the pointer in point mode)</td></tr>
+                <tr><td>Tap</td><td>Train: select what the pointer is on · Learn: play the chapter action</td></tr>
+                <tr><td>Double tap</td><td>Reset the camera</td></tr>
+                <tr><td>Flick</td><td>Train: switch orbit / point · Learn: previous / next chapter</td></tr>
+              </table></div>
+              <div><b>Mouse and keyboard</b><table>
+                <tr><td>Drag · scroll</td><td>Orbit · zoom</td></tr>
+                <tr><td><span class="kbd">1</span>–<span class="kbd">6</span></td><td>Same as pads T1–T6</td></tr>
+                <tr><td><span class="kbd">←</span> <span class="kbd">→</span></td><td>Learn: previous / next chapter</td></tr>
+                <tr><td><span class="kbd">T</span></td><td>Train: trainer report</td></tr>
+                <tr><td><span class="kbd">?</span></td><td>Help</td></tr>
+              </table></div>
+            </div>
+          </div>
+          <p class="disclaimer">Educational prototype. Safety rules are illustrative simplifications modelled on the ACR Manual on MR Safety and ASTM F2503; they do not replace local MR safety procedures, manufacturer labelling or certification. The 3D scanner is schematic and does not simulate real fields. AI replies are generated text: the rule engine's decision is always the reference.</p>
+        </div>
+      </section>
+    </div>
+
+    <!-- ASSISTANT -->
+    <aside class="drawer" id="drawer" aria-label="Coach">
+      <div class="drawer-h">
+        <div style="flex:1;min-width:0"><h2 id="drawer-title">Coach</h2><div class="ai-status" id="ai-status">Checking…</div></div>
+        <button class="btn small" id="drawer-clear" type="button">Clear</button>
+        <button class="btn small" id="drawer-close" type="button" aria-label="Close assistant">✕</button>
+      </div>
+      <div class="msgs" id="msgs" aria-live="polite"></div>
+      <div class="quick" id="quick"></div>
+      <form class="ask" id="ask"><input id="ask-input" maxlength="500" autocomplete="off" placeholder="Ask about MRI safety or the scanner…" aria-label="Your question"><button class="btn primary" type="submit">Ask</button></form>
+      <div class="drawer-note">Answers come from the built-in knowledge base, or from a local AI model if you set one up. The assessor's rule card is the reference.</div>
+    </aside>
+  </div>
+</div>
+
+<!-- Device popover -->
+<div class="pop" id="pop" hidden role="dialog" aria-label="Controller">
+  <div style="display:flex;align-items:center;gap:8px"><h3 style="flex:1">Handheld controller</h3><button class="btn small" id="pop-close" type="button">✕</button></div>
+  <div class="sec">
+    <dl class="kv"><dt>Status</dt><dd id="pd-status">Not connected</dd><dt>Firmware</dt><dd id="pd-fw" class="mono">—</dd><dt>Motion sensor</dt><dd id="pd-imu">—</dd></dl>
+    <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn small primary" id="pd-connect" type="button">Connect</button><button class="btn small" id="pd-level" type="button" disabled>Level the controller</button><button class="btn small" id="pd-recal" type="button" disabled>Recalibrate pads</button></div>
+  </div>
+  <div class="sec">
+    <div class="eyebrow">Tilt control</div>
+    <div class="seg" id="pd-mode"><button type="button" data-m="off">Off</button><button type="button" data-m="orbit" aria-pressed="true">Tilt to orbit</button><button type="button" data-m="point">Tilt to point</button></div>
+    <div class="tilt">
+      <svg viewBox="-60 -60 120 120" aria-label="Current tilt"><circle r="56" fill="#0a121c" stroke="rgba(130,190,240,.26)"/><circle r="12" fill="none" stroke="rgba(130,190,240,.2)" stroke-dasharray="3 3"/><line x1="-56" x2="56" stroke="rgba(130,190,240,.12)"/><line y1="-56" y2="56" stroke="rgba(130,190,240,.12)"/><circle id="tilt-dot" r="7" fill="#45d6ec"/></svg>
+      <dl class="kv" style="grid-template-columns:90px 1fr"><dt>Roll</dt><dd id="pd-roll" class="mono">—</dd><dt>Pitch</dt><dd id="pd-pitch" class="mono">—</dd><dt>Last gesture</dt><dd id="pd-gest">—</dd></dl>
+    </div>
+    <p class="note">Hold it flat and press <b>Level the controller</b> once. The dashed circle is the dead zone: tilt past it to move.</p>
+  </div>
+  <div class="sec">
+    <div class="eyebrow">Wand meter · magnetometer</div>
+    <div class="meter"><i id="wand-bar"></i></div>
+    <div style="display:flex;justify-content:space-between;font-size:12.5px"><span id="wand-text">—</span><span class="mono" id="wand-val">—</span></div>
+    <p class="note">Shows the change in magnetic field strength since levelling. Bring a magnet or steel near the board to see it react. This demonstrates the idea behind ferromagnetic detectors, which support (never replace) screening.</p>
+  </div>
+  <div class="sec"><div class="eyebrow" id="pd-pads-title">Pads in this mode</div><div class="padgrid" id="pd-pads"></div></div>
+</div>
+
+<!-- Help -->
+<div class="modal" id="help" hidden role="dialog" aria-modal="true" aria-labelledby="help-title">
+  <div class="modal-card">
+    <div style="display:flex;align-items:center;gap:10px"><h2 id="help-title" style="flex:1">How to use MRISafe Twin</h2><button class="btn small" id="help-close" type="button">Close</button></div>
+    <div class="help-grid">
+      <div><b>Quick start</b><ol class="howto">
+        <li>Run <span class="mono">python server/server.py</span> and open <span class="mono">localhost:8000</span> in Chrome or Edge.</li>
+        <li>Click the controller chip (top right) → <b>Connect</b>, choose the ESP32-S3 port.</li>
+        <li>Hold the controller flat → <b>Level the controller</b>.</li>
+        <li>Pick <b>Train</b> or <b>Learn</b>. Open the assistant with the <b>Coach</b> chip.</li>
+      </ol></div>
+      <div><b>Touch pads</b><table id="help-pads"></table></div>
+      <div><b>Motion gestures</b><table>
+        <tr><td>Tilt</td><td>Orbit the view, or move the pointer in point mode</td></tr>
+        <tr><td>Tap</td><td>Train: select under the pointer · Learn: chapter action (pulse, acquire, build, quench)</td></tr>
+        <tr><td>Double tap</td><td>Reset the camera</td></tr>
+        <tr><td>Flick left / right</td><td>Train: switch orbit / point · Learn: previous / next chapter</td></tr>
+      </table></div>
+      <div><b>Coach</b><table>
+        <tr><td>Train</td><td>“Explain my last mistake” uses the broken rule and your recorded actions. “Debrief” summarises the attempt for a trainer.</td></tr>
+        <tr><td>Learn</td><td>Ask anything about the current chapter, or “Quiz me”.</td></tr>
+        <tr><td>Setup</td><td>Nothing is needed for the coach. For a generated local model, copy <span class="mono">server/.env.example</span> to <span class="mono">server/.env</span> and point it at Ollama.</td></tr>
+        <tr><td>Without a model</td><td>The built-in knowledge base answers every question, offline.</td></tr>
+      </table></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast-host" id="toasts" aria-live="polite"></div>
+<div class="sr-only" id="hand-live" aria-live="polite"></div>
+
+<div class="hand-card" id="hand-card" hidden role="region" aria-label="Hand control">
+  <div class="hand-head"><span class="eyebrow">Hand control</span><span class="hand-status" id="hand-status"></span></div>
+  <canvas id="hand-canvas" width="160" height="120" aria-label="Camera preview with hand landmarks"></canvas>
+  <p class="hand-help">Right hand: point to aim · pinch to tap · pinch and drag to orbit · open palm for 1 s to reset.<br>Both palms open: move them apart to zoom in, together to zoom out.</p>
+  <div class="hand-tools">
+    <button class="btn small" id="hand-swap" type="button" aria-pressed="false" title="Use this if your right hand is treated as left">Swap hands</button>
+    <button class="btn small" id="hand-speak" type="button" aria-pressed="false" title="Read hand-control status aloud">Speak feedback</button>
+  </div>
+  <button class="btn small" id="hand-stop" type="button">Turn off</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script>
+/*
+ * MRISafe Twin — assessment engine
+ * ------------------------------------------------------------------
+ * Pure JavaScript. No DOM, no Three.js, no network.
+ * Loaded in the browser as a classic <script> (exposes window.MRIEngine)
+ * and in Node via require() for the unit tests in /tests.
+ *
+ * Contents
+ *   1. Event contract (pads, scene events, labels, zones)
+ *   2. Rule dataset (ILLUSTRATIVE — see docs/rules.md)
+ *   3. Items, patients, scenarios
+ *   4. Checkpoints and requirement checks
+ *   5. Attempt  — the deterministic state machine for one scenario run
+ *   6. Session  — a trainee session made of attempts (handles reset)
+ *   7. Adaptive scenario selection
+ *   8. Serial protocol parser + sequence tracker
+ *   9. Report export (JSON / CSV)
+ */
+(function (root, factory) {
+  const api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.MRIEngine = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+
+  /* ---------------------------------------------------------------
+   * 1. Event contract
+   * ------------------------------------------------------------- */
+  const PROTOCOL_VERSION = 1;
+
+  // Physical pads -> attestation events. Shared with firmware.
+  const PADS = [
+    { id: 'T1', gpio: 4,  event: 'SCREENING_CHECK',  short: 'Screening' },
+    { id: 'T2', gpio: 5,  event: 'VERIFY_EQUIPMENT', short: 'Equipment' },
+    { id: 'T3', gpio: 6,  event: 'ROOM_ACCESS',      short: 'Zone IV access' },
+    { id: 'T4', gpio: 7,  event: 'SAFETY_CLEARANCE', short: 'Final clearance' },
+    { id: 'T5', gpio: 13, event: 'PROCEED_TO_SCAN',  short: 'Proceed to scan' },
+    { id: 'T6', gpio: 14, event: 'RESET_SCENARIO',   short: 'Reset attempt' },
+  ];
+  const PAD_EVENT = Object.fromEntries(PADS.map(p => [p.id, p.event]));
+  const ATTEST_EVENTS = PADS.map(p => p.event);
+  // Accepted for compatibility with the original brief's naming.
+  const EVENT_ALIASES = { START_SIMULATION: 'PROCEED_TO_SCAN' };
+
+  // Events produced by interacting with the 3D scene / inspector.
+  const SCENE_EVENTS = [
+    'CONFIRM_ID',           // trainee confirms two identifiers match
+    'INSPECT',              // target: 'record' | 'patient' | itemId | other scene object
+    'IMPLANT_DECISION',     // value: 'ESCALATE' | 'PROCEED_ON_CARD' | 'IGNORE'
+    'CLASSIFY',             // target: itemId, value: label
+    'CONFIRM_CONDITIONS',   // target: itemId (MR Conditional item)
+    'MOVE',                 // target: itemId, value: zone
+    'REMOVE_PERSONAL_ITEM', // target: personal item id
+  ];
+  const ALL_EVENTS = ATTEST_EVENTS.concat(SCENE_EVENTS);
+
+  const LABELS = {
+    MR_SAFE:        { text: 'MR Safe',        tone: 'safe' },
+    MR_CONDITIONAL: { text: 'MR Conditional', tone: 'conditional' },
+    MR_UNSAFE:      { text: 'MR Unsafe',      tone: 'unsafe' },
+  };
+  const ZONES = {
+    ZONE_II: { text: 'Zone II · staging' },
+    ZONE_IV: { text: 'Zone IV · magnet room' },
+  };
+  const SOURCES = ['hw', 'kbd', 'ui', 'scene', 'test'];
+
+  /* ---------------------------------------------------------------
+   * 2. Rule dataset
+   * Every rule is an EDUCATIONAL SIMPLIFICATION. `basis` names the
+   * guidance the rule is modelled on; none has been verified by a
+   * qualified MR safety officer for this prototype (status field).
+   * ------------------------------------------------------------- */
+  const SEVERITY = {
+    critical: { label: 'Critical', points: 25 },
+    major:    { label: 'Major',    points: 10 },
+    minor:    { label: 'Minor',    points: 5 },
+  };
+  const SCORING = { start: 100, passMinScore: 80, passMaxCritical: 0 };
+
+  const BASIS = {
+    ACR: 'ACR Manual on MR Safety (American College of Radiology)',
+    ASTM: 'ASTM F2503 — marking of medical devices for safety in the MR environment',
+    NPSG: 'Two-identifier patient identification (Joint Commission NPSG.01.01.01)',
+    LOCAL: 'Training-procedure convention for this prototype (not a clinical rule)',
+  };
+
+  const RULES = {
+    'R-ID-01': {
+      category: 'screening', severity: 'major', basis: 'NPSG',
+      title: 'Identity not confirmed before screening sign-off',
+      why: 'Screening answers only protect the patient they belong to. Two identifiers (name and MRN or date of birth) must match the request and the wristband.',
+      corrective: 'Open the patient record and confirm that both identifiers on the wristband match the scan request, then sign off screening.',
+    },
+    'R-SCR-01': {
+      category: 'screening', severity: 'major', basis: 'ACR',
+      title: 'Screening signed off without reviewing the form',
+      why: 'Every patient must be screened before entering Zone IV. Signing off without reading the form means implants, devices and prior metal injuries can be missed.',
+      corrective: 'Open the patient record, read the MR screening form, then sign off.',
+    },
+    'R-SCR-02': {
+      category: 'screening', severity: 'critical', basis: 'ACR',
+      title: 'Reported implant not referred for review',
+      why: '"MR Conditional" means the device is acceptable only under specific conditions in its labelling (for example field strength and scan limits). A patient card alone does not show that those conditions can be met for this scan.',
+      corrective: 'Escalate the implant to the MR safety officer or supervising radiologist for review against the manufacturer\'s MR Conditional labelling before sign-off.',
+    },
+    'R-EQ-01': {
+      category: 'equipment', severity: 'major', basis: 'ASTM',
+      title: 'Equipment signed off with items not classified',
+      why: 'Each item near the magnet room needs its MR status determined from its labelling before equipment can be cleared.',
+      corrective: 'Select each item in the staging area and Zone IV, read its labelling, and classify it.',
+    },
+    'R-EQ-02': {
+      category: 'equipment', severity: 'major', basis: 'ASTM',
+      title: 'Item misclassified',
+      why: 'MR status comes from the item\'s labelling. Items with no labelling have unknown status and are handled as MR Unsafe.',
+      corrective: 'Re-read the item\'s label and correct the classification.',
+    },
+    'R-EQ-03': {
+      category: 'equipment', severity: 'critical', basis: 'ACR',
+      title: 'MR Unsafe item in or brought into Zone IV',
+      why: 'Ferromagnetic objects can be pulled into the magnet with great force (projectile effect). The magnetic field is always on, even when no scan is running.',
+      corrective: 'Keep the item out of Zone IV. Move it back to the Zone II staging area.',
+    },
+    'R-EQ-04': {
+      category: 'equipment', severity: 'major', basis: 'ASTM',
+      title: 'MR Conditional item in Zone IV without its conditions checked',
+      why: 'An MR Conditional item is acceptable only when the conditions in its labelling are met in this suite.',
+      corrective: 'Open the item and confirm its conditions against the labelling, or move it out of Zone IV.',
+    },
+    'R-EQ-05': {
+      category: 'equipment', severity: 'critical', basis: 'ASTM',
+      title: 'MR Unsafe or unknown item classified as acceptable',
+      why: 'Calling an MR Unsafe or unlabelled item "Safe" or "Conditional" is the error that lets a projectile into the magnet room.',
+      corrective: 'Classify items with no MR labelling, or an MR Unsafe label, as MR Unsafe.',
+    },
+    'R-EQ-06': {
+      category: 'equipment', severity: 'major', basis: 'ACR',
+      title: 'Item moved toward Zone IV before its MR status was determined',
+      why: 'Nothing should enter Zone IV until its MR status is known.',
+      corrective: 'Inspect and classify the item first.',
+    },
+    'R-ACC-01': {
+      category: 'access', severity: 'critical', basis: 'ACR',
+      title: 'Personal metallic items not removed before Zone IV',
+      why: 'Phones, hair clips, keys and similar items can become projectiles, heat up, or be damaged by the field.',
+      corrective: 'Inspect the patient, remove and store personal items in the locker, then repeat the access check.',
+    },
+    'R-ACC-02': {
+      category: 'access', severity: 'major', basis: 'LOCAL',
+      title: 'Patient not checked at the Zone IV door',
+      why: 'A final visual and verbal check at the door catches items added after screening (for example a phone picked up while waiting).',
+      corrective: 'Select the patient on the table to perform the final check before attesting room access.',
+    },
+    'R-SEQ-01': {
+      category: 'sequence', severity: 'major', basis: 'LOCAL',
+      title: 'Step attempted before its prerequisites',
+      why: 'The procedure is ordered so that each sign-off rests on checks already completed.',
+      corrective: 'Complete the earlier checkpoints first. The procedure list shows which ones are open.',
+    },
+    'R-SEQ-02': {
+      category: 'access', severity: 'critical', basis: 'ACR',
+      title: 'Zone IV access attempted before screening and equipment clearance',
+      why: 'Only screened patients and cleared equipment may enter Zone IV.',
+      corrective: 'Finish screening sign-off and equipment verification before the room access check.',
+    },
+    'R-SCAN-01': {
+      category: 'sequence', severity: 'critical', basis: 'LOCAL',
+      title: 'Scan started without final safety clearance',
+      why: 'The final clearance confirms nothing changed since the earlier checks. Starting without it skips the last barrier.',
+      corrective: 'Complete the final safety clearance (T4), then proceed to scan.',
+    },
+  };
+  for (const id of Object.keys(RULES)) {
+    RULES[id].id = id;
+    RULES[id].status = 'illustrative';
+    RULES[id].basisText = BASIS[RULES[id].basis];
+  }
+
+  /* ---------------------------------------------------------------
+   * 3. Items, patients, scenarios
+   * ------------------------------------------------------------- */
+  const ITEMS = {
+    o2: {
+      name: 'Oxygen cylinder on trolley', truth: 'MR_UNSAFE', labelShown: null,
+      material: 'Steel cylinder, steel trolley frame',
+      note: 'No MR labelling on the cylinder or the trolley. Status unknown.',
+    },
+    wheelchair: {
+      name: 'Transport wheelchair', truth: 'MR_UNSAFE', labelShown: 'MR_UNSAFE',
+      material: 'Steel frame',
+      note: 'Labelled MR Unsafe.',
+    },
+    ivpole: {
+      name: 'IV pole', truth: 'MR_CONDITIONAL', labelShown: 'MR_CONDITIONAL',
+      material: 'Aluminium and plastic',
+      note: 'Labelled MR Conditional. Conditions of use are listed in the manufacturer\'s documentation.',
+    },
+    pads: {
+      name: 'Foam positioning pads', truth: 'MR_SAFE', labelShown: 'MR_SAFE',
+      material: 'Polyurethane foam, no metal',
+      note: 'Labelled MR Safe.',
+    },
+    pump: {
+      name: 'Infusion pump', truth: 'MR_UNSAFE', labelShown: null,
+      material: 'Electronic device in a metal housing',
+      note: 'No MR labelling found. Status unknown.',
+    },
+  };
+
+  const PERSONAL_ITEMS = {
+    hairclip: { name: 'Metal hair clip' },
+    phone:    { name: 'Mobile phone in gown pocket' },
+  };
+
+  const BASE_PATIENT = {
+    name: 'Training Patient A', mrn: 'TR-00417', dob: '1984-03-12',
+    exam: 'MRI brain without contrast (training case)',
+    fictional: true,
+  };
+
+  const IMPLANT_CIED = {
+    type: 'Cardiac implantable electronic device',
+    card: 'Patient carries a device card that states "MR Conditional".',
+  };
+
+  const ALL_CHECKPOINTS = ['SCREENING', 'EQUIPMENT', 'ACCESS', 'CLEARANCE', 'SCAN'];
+
+  const SCENARIOS = {
+    guided: {
+      title: 'Guided practice', level: 1, hints: true, kind: 'core',
+      summary: 'Full pre-scan preparation with the next step highlighted.',
+      checkpoints: ALL_CHECKPOINTS,
+      patient: { implant: null, personal: [] },
+      items: { pads: 'ZONE_IV', o2: 'ZONE_II', ivpole: 'ZONE_II' },
+    },
+    standard: {
+      title: 'Standard pre-scan', level: 2, hints: false, kind: 'core',
+      summary: 'Full pre-scan preparation. One hazard has been left in the magnet room.',
+      checkpoints: ALL_CHECKPOINTS,
+      patient: { implant: null, personal: ['hairclip'] },
+      items: { o2: 'ZONE_IV', pads: 'ZONE_IV', ivpole: 'ZONE_II', wheelchair: 'ZONE_II' },
+    },
+    complex: {
+      title: 'Complex pre-scan', level: 3, hints: false, kind: 'core',
+      summary: 'Implant on the screening form, personal items, and several hazards.',
+      checkpoints: ALL_CHECKPOINTS,
+      patient: { implant: IMPLANT_CIED, personal: ['phone', 'hairclip'] },
+      items: { o2: 'ZONE_IV', ivpole: 'ZONE_IV', pads: 'ZONE_IV', wheelchair: 'ZONE_II', pump: 'ZONE_II' },
+    },
+    'drill-equipment': {
+      title: 'Equipment classification drill', level: 2, hints: false, kind: 'drill',
+      summary: 'Classify every item by its labelling and clear Zone IV.',
+      checkpoints: ['EQUIPMENT'],
+      patient: { implant: null, personal: [] },
+      items: { o2: 'ZONE_IV', pump: 'ZONE_IV', ivpole: 'ZONE_IV', wheelchair: 'ZONE_II', pads: 'ZONE_II' },
+    },
+    'drill-screening': {
+      title: 'Screening drill', level: 2, hints: false, kind: 'drill',
+      summary: 'Identity check, form review and implant referral.',
+      checkpoints: ['SCREENING'],
+      patient: { implant: IMPLANT_CIED, personal: [] },
+      items: {},
+    },
+  };
+  const PROGRESSION = { guided: 'standard', standard: 'complex', complex: 'complex' };
+
+  /* ---------------------------------------------------------------
+   * 4. Checkpoints and requirement checks
+   * Each check returns null when satisfied, or { rule, subject, evidence, focus }.
+   * ------------------------------------------------------------- */
+  const CHECKPOINTS = {
+    SCREENING: {
+      id: 'SCREENING', event: 'SCREENING_CHECK', pad: 'T1', stage: 1,
+      title: 'Screening sign-off', detail: 'Identity, screening form and implant review',
+      prereqs: [], prereqRule: 'R-SEQ-01',
+      requires: ['idConfirmed', 'formReviewed', 'implantResolved'],
+    },
+    EQUIPMENT: {
+      id: 'EQUIPMENT', event: 'VERIFY_EQUIPMENT', pad: 'T2', stage: 2,
+      title: 'Equipment verification', detail: 'Every item classified, Zone IV clear',
+      prereqs: [], prereqRule: 'R-SEQ-01',
+      requires: ['allClassified', 'classificationsCorrect', 'noUnsafeInZoneIV', 'conditionalConfirmed'],
+    },
+    ACCESS: {
+      id: 'ACCESS', event: 'ROOM_ACCESS', pad: 'T3', stage: 3,
+      title: 'Zone IV access check', detail: 'Final patient check at the door',
+      prereqs: ['SCREENING', 'EQUIPMENT'], prereqRule: 'R-SEQ-02',
+      requires: ['patientChecked', 'personalRemoved'],
+    },
+    CLEARANCE: {
+      id: 'CLEARANCE', event: 'SAFETY_CLEARANCE', pad: 'T4', stage: 4,
+      title: 'Final safety clearance', detail: 'Re-check that nothing changed',
+      prereqs: ['ACCESS'], prereqRule: 'R-SEQ-01',
+      requires: ['noUnsafeInZoneIV', 'conditionalConfirmed', 'personalRemoved'],
+    },
+    SCAN: {
+      id: 'SCAN', event: 'PROCEED_TO_SCAN', pad: 'T5', stage: 5,
+      title: 'Proceed to scan', detail: 'Table moves into the bore',
+      prereqs: ['CLEARANCE'], prereqRule: 'R-SCAN-01',
+      requires: [],
+    },
+  };
+  const CHECKPOINT_BY_EVENT = Object.fromEntries(Object.values(CHECKPOINTS).map(c => [c.event, c.id]));
+
+  const itemName = id => (ITEMS[id] ? ITEMS[id].name : id);
+  const labelText = l => (LABELS[l] ? LABELS[l].text : 'unclassified');
+
+  const CHECKS = {
+    idConfirmed: s => s.patient.idConfirmed ? null : {
+      rule: 'R-ID-01', subject: 'patient',
+      evidence: 'Patient identifiers had not been confirmed against the request.',
+      hint: 'Open the patient record and confirm the two identifiers.', focus: 'record',
+    },
+    formReviewed: s => s.patient.formReviewed ? null : {
+      rule: 'R-SCR-01', subject: 'patient',
+      evidence: 'The MR screening form had not been opened.',
+      hint: 'Open the patient record to review the MR screening form.', focus: 'record',
+    },
+    implantResolved: s => (!s.patient.implant || s.patient.implantResolved) ? null : {
+      rule: 'R-SCR-02', subject: 'implant',
+      evidence: `The form reports a ${s.patient.implant.type.toLowerCase()} that had not been referred for review.`,
+      hint: 'The form lists an implant. Decide how to handle it in the patient record.', focus: 'record',
+    },
+    allClassified: s => {
+      const open = Object.keys(s.items).filter(id => !s.items[id].classifiedAs);
+      return open.length === 0 ? null : {
+        rule: 'R-EQ-01', subject: 'items',
+        evidence: `Not yet classified: ${open.map(itemName).join(', ')}.`,
+        hint: `Select the ${itemName(open[0]).toLowerCase()} and classify it from its label.`, focus: open[0],
+      };
+    },
+    classificationsCorrect: s => {
+      const wrong = Object.keys(s.items).filter(id => s.items[id].classifiedAs && s.items[id].classifiedAs !== ITEMS[id].truth);
+      return wrong.length === 0 ? null : {
+        rule: 'R-EQ-02', subject: 'items:' + wrong.join(','),
+        evidence: wrong.map(id => `${itemName(id)} is classified as ${labelText(s.items[id].classifiedAs)}`).join('; ') + '.',
+        hint: `Re-check the label on the ${itemName(wrong[0]).toLowerCase()}.`, focus: wrong[0],
+      };
+    },
+    noUnsafeInZoneIV: s => {
+      const bad = Object.keys(s.items).filter(id => s.items[id].zone === 'ZONE_IV' && ITEMS[id].truth === 'MR_UNSAFE');
+      return bad.length === 0 ? null : {
+        rule: 'R-EQ-03', subject: 'zone4:' + bad.join(','),
+        evidence: `${bad.map(itemName).join(', ')} ${bad.length > 1 ? 'were' : 'was'} still inside Zone IV.`,
+        hint: `Move the ${itemName(bad[0]).toLowerCase()} out of the magnet room.`, focus: bad[0],
+      };
+    },
+    conditionalConfirmed: s => {
+      const bad = Object.keys(s.items).filter(id => s.items[id].zone === 'ZONE_IV' && ITEMS[id].truth === 'MR_CONDITIONAL' && !s.items[id].conditionsConfirmed);
+      return bad.length === 0 ? null : {
+        rule: 'R-EQ-04', subject: 'cond:' + bad.join(','),
+        evidence: `${bad.map(itemName).join(', ')} is in Zone IV and its MR Conditional conditions were not confirmed.`,
+        hint: `Confirm the conditions for the ${itemName(bad[0]).toLowerCase()}, or move it out.`, focus: bad[0],
+      };
+    },
+    patientChecked: s => s.patient.checked ? null : {
+      rule: 'R-ACC-02', subject: 'patient',
+      evidence: 'The patient was not checked at the Zone IV door.',
+      hint: 'Select the patient on the table for the final door check.', focus: 'patient',
+    },
+    personalRemoved: s => {
+      const left = s.patient.personal.filter(p => !p.removed);
+      return left.length === 0 ? null : {
+        rule: 'R-ACC-01', subject: 'personal',
+        evidence: `${left.map(p => PERSONAL_ITEMS[p.id].name).join(', ')} still with the patient.`,
+        hint: 'Inspect the patient and remove personal items.', focus: 'patient',
+      };
+    },
+  };
+
+  const REQ_LABELS = {
+    idConfirmed: 'Two identifiers confirmed',
+    formReviewed: 'Screening form reviewed',
+    implantResolved: 'Implant referred for review (if reported)',
+    allClassified: 'Every item classified',
+    classificationsCorrect: 'Classifications match labelling',
+    noUnsafeInZoneIV: 'No MR Unsafe item in Zone IV',
+    conditionalConfirmed: 'Conditional items in Zone IV checked',
+    patientChecked: 'Patient checked at the door',
+    personalRemoved: 'Personal items removed',
+  };
+
+  /* ---------------------------------------------------------------
+   * 5. Attempt — deterministic state machine for one scenario run
+   * ------------------------------------------------------------- */
+  function defaultClock() { return Date.now(); }
+
+  function validateEvent(evt) {
+    if (!evt || typeof evt !== 'object') return 'Event must be an object.';
+    if (typeof evt.event !== 'string') return 'Event name missing.';
+    const name = EVENT_ALIASES[evt.event] || evt.event;
+    if (!ALL_EVENTS.includes(name)) return `Unknown event "${evt.event}".`;
+    if (evt.src !== undefined && !SOURCES.includes(evt.src)) return `Unknown source "${evt.src}".`;
+    if (['CLASSIFY', 'CONFIRM_CONDITIONS', 'MOVE', 'REMOVE_PERSONAL_ITEM', 'INSPECT'].includes(name) && typeof evt.target !== 'string') {
+      return `${name} needs a target.`;
+    }
+    if (name === 'CLASSIFY' && !LABELS[evt.value]) return `CLASSIFY value must be one of ${Object.keys(LABELS).join(', ')}.`;
+    if (name === 'MOVE' && !ZONES[evt.value]) return `MOVE value must be one of ${Object.keys(ZONES).join(', ')}.`;
+    if (name === 'IMPLANT_DECISION' && !['ESCALATE', 'PROCEED_ON_CARD', 'IGNORE'].includes(evt.value)) return 'IMPLANT_DECISION value is not recognised.';
+    return null;
+  }
+
+  class Attempt {
+    constructor(scenarioId, opts = {}) {
+      const sc = SCENARIOS[scenarioId];
+      if (!sc) throw new Error(`Unknown scenario "${scenarioId}"`);
+      this.scenarioId = scenarioId;
+      this.scenario = sc;
+      this.clock = opts.clock || defaultClock;
+      this.attemptNo = opts.attemptNo || 1;
+      this.startedAt = this.clock();
+      this.endedAt = null;
+      this.status = 'active'; // active | completed | reset | switched
+      this.log = [];
+      this.deductions = {};   // key "rule|subject" -> points (each pair penalised once)
+      this.checkpoints = {};
+      for (const id of sc.checkpoints) this.checkpoints[id] = { status: 'open', completedAt: null, incorrect: 0, repeats: 0 };
+      this.patient = {
+        ...BASE_PATIENT,
+        implant: sc.patient.implant,
+        personal: sc.patient.personal.map(id => ({ id, removed: false })),
+        idConfirmed: false, formReviewed: false, implantResolved: false, implantDecision: null, checked: false,
+      };
+      this.items = {};
+      for (const [id, zone] of Object.entries(sc.items)) {
+        this.items[id] = { zone, startZone: zone, inspected: false, classifiedAs: null, conditionsConfirmed: false };
+      }
+    }
+
+    /* Order of checkpoints as defined by the scenario. */
+    get order() { return this.scenario.checkpoints; }
+
+    isComplete() { return this.order.every(id => this.checkpoints[id].status === 'done'); }
+
+    score() {
+      const lost = Object.values(this.deductions).reduce((a, b) => a + b, 0);
+      return Math.max(0, SCORING.start - lost);
+    }
+
+    violations() { return this.log.flatMap(o => o.violations.map(v => ({ ...v, n: o.n, at: o.at }))); }
+
+    criticalCount() {
+      // Unique critical (rule|subject) pairs
+      const keys = new Set(this.violations().filter(v => v.severity === 'critical').map(v => v.rule + '|' + v.subject));
+      return keys.size;
+    }
+
+    passed() {
+      return this.isComplete() && this.score() >= SCORING.passMinScore && this.criticalCount() <= SCORING.passMaxCritical;
+    }
+
+    _violation(check) {
+      const r = RULES[check.rule];
+      const key = check.rule + '|' + check.subject;
+      const first = !(key in this.deductions);
+      const points = first ? SEVERITY[r.severity].points : 0;
+      if (first) this.deductions[key] = points;
+      return {
+        rule: r.id, severity: r.severity, category: r.category, title: r.title,
+        subject: check.subject, evidence: check.evidence, why: r.why, corrective: r.corrective,
+        points, repeat: !first, status: r.status, basis: r.basisText,
+      };
+    }
+
+    _unmet(checkpointId) {
+      return CHECKPOINTS[checkpointId].requires.map(name => CHECKS[name](this)).filter(Boolean);
+    }
+
+    /* Per-requirement status for one checkpoint (used by guided mode and the trainer view). */
+    requirementStatus(cpId) {
+      return CHECKPOINTS[cpId].requires.map(name => ({ name, label: REQ_LABELS[name], ok: !CHECKS[name](this) }));
+    }
+
+    /* Next step guidance — used for guided mode and the trainer view. */
+    nextHint() {
+      if (this.status !== 'active') return null;
+      for (const id of this.order) {
+        const cp = this.checkpoints[id];
+        if (cp.status === 'done') continue;
+        const missing = CHECKPOINTS[id].prereqs.filter(p => this.checkpoints[p] && this.checkpoints[p].status !== 'done');
+        if (missing.length) continue;
+        const unmet = this._unmet(id);
+        if (unmet.length) return { checkpoint: id, text: unmet[0].hint, focus: unmet[0].focus };
+        const def = CHECKPOINTS[id];
+        return { checkpoint: id, text: `Ready: touch ${def.pad} (${def.title}).`, focus: 'pad:' + def.pad };
+      }
+      return null;
+    }
+
+    /* Main entry point. Always returns an outcome record; never throws for bad input. */
+    handle(raw) {
+      const at = this.clock() - this.startedAt;
+      const evt = raw && typeof raw === 'object' ? { ...raw } : { event: raw };
+      if (typeof evt.event === 'string' && EVENT_ALIASES[evt.event]) evt.event = EVENT_ALIASES[evt.event];
+      const o = {
+        n: this.log.length + 1, at, wall: new Date(this.clock()).toISOString(),
+        src: evt.src || 'test', devSeq: Number.isInteger(evt.seq) ? evt.seq : null, pad: evt.pad || null,
+        event: typeof evt.event === 'string' ? evt.event : String(evt.event),
+        target: evt.target || null, value: evt.value || null,
+        received: true, accepted: false, checkpointCompleted: null,
+        violations: [], notes: [], error: null, feedbackShown: false, effects: [],
+      };
+      this.log.push(o);
+
+      const invalid = validateEvent(evt);
+      if (invalid) { o.error = 'INVALID_EVENT'; o.notes.push(invalid); return o; }
+      if (this.status !== 'active') { o.error = 'ATTEMPT_CLOSED'; o.notes.push('This attempt has ended. Start a new attempt.'); return o; }
+
+      if (evt.event === 'RESET_SCENARIO') {
+        // Handled by Session; an Attempt on its own just records it.
+        o.accepted = true; o.notes.push('Reset requested.');
+        return o;
+      }
+      if (ATTEST_EVENTS.includes(evt.event)) return this._attest(o, evt);
+      return this._scene(o, evt);
+    }
+
+    _attest(o, evt) {
+      const cpId = CHECKPOINT_BY_EVENT[evt.event];
+      const cp = this.checkpoints[cpId];
+      const def = CHECKPOINTS[cpId];
+      if (!cp) {
+        o.error = 'NOT_IN_SCENARIO';
+        o.notes.push(`${def.title} is not part of this scenario.`);
+        return o;
+      }
+      if (cp.status === 'done') {
+        cp.repeats++;
+        o.notes.push(`${def.title} was already completed. Repeat touch recorded, no change.`);
+        return o;
+      }
+      // Prerequisites (only those included in this scenario)
+      const missing = def.prereqs.filter(p => this.checkpoints[p] && this.checkpoints[p].status !== 'done');
+      if (missing.length) {
+        cp.incorrect++;
+        o.violations.push(this._violation({
+          rule: def.prereqRule, subject: cpId,
+          evidence: `${def.pad} (${def.title}) was touched while ${missing.map(m => CHECKPOINTS[m].title).join(' and ')} ${missing.length > 1 ? 'were' : 'was'} still open.`,
+        }));
+        o.canProceed = false;
+        return o;
+      }
+      const unmet = this._unmet(cpId);
+      if (unmet.length) {
+        cp.incorrect++;
+        for (const u of unmet) {
+          o.violations.push(this._violation({ ...u, evidence: `${def.pad} (${def.title}) was touched while this was unresolved: ${u.evidence}` }));
+        }
+        o.canProceed = false;
+        return o;
+      }
+      cp.status = 'done';
+      cp.completedAt = o.at;
+      o.accepted = true;
+      o.checkpointCompleted = cpId;
+      o.canProceed = true;
+      o.effects.push({ type: 'checkpoint', id: cpId });
+      if (cpId === 'SCAN') o.effects.push({ type: 'scan' });
+      if (this.isComplete()) {
+        this.status = 'completed';
+        this.endedAt = this.clock();
+        o.effects.push({ type: 'complete' });
+      }
+      return o;
+    }
+
+    _scene(o, evt) {
+      const p = this.patient;
+      switch (evt.event) {
+        case 'CONFIRM_ID':
+          if (p.idConfirmed) { o.notes.push('Identifiers already confirmed.'); return o; }
+          p.idConfirmed = true; o.accepted = true; o.notes.push('Two identifiers confirmed against the request.');
+          return o;
+
+        case 'INSPECT': {
+          const t = evt.target;
+          if (t === 'record') { o.accepted = true; if (!p.formReviewed) { p.formReviewed = true; o.notes.push('Screening form opened.'); } return o; }
+          if (t === 'patient') { o.accepted = true; if (!p.checked) { p.checked = true; o.notes.push('Patient checked.'); } return o; }
+          if (this.items[t]) { o.accepted = true; this.items[t].inspected = true; return o; }
+          // Other scene objects (gantry, console, door): informational only
+          o.accepted = true; o.notes.push('Viewed ' + t + '.');
+          return o;
+        }
+
+        case 'IMPLANT_DECISION':
+          if (!p.implant) { o.error = 'NO_IMPLANT'; o.notes.push('No implant is reported for this patient.'); return o; }
+          if (p.implantResolved) { o.notes.push('Implant already referred.'); return o; }
+          p.implantDecision = evt.value;
+          if (evt.value === 'ESCALATE') {
+            p.implantResolved = true; o.accepted = true;
+            o.notes.push('Implant referred to the MR safety officer / supervising radiologist. Simulated outcome: review completed, scan may proceed under the labelled conditions.');
+            return o;
+          }
+          o.violations.push(this._violation({
+            rule: 'R-SCR-02', subject: 'implant',
+            evidence: evt.value === 'PROCEED_ON_CARD'
+              ? 'You chose to proceed on the strength of the patient\'s device card alone.'
+              : 'You chose to disregard the implant reported on the screening form.',
+          }));
+          o.canProceed = false;
+          return o;
+
+        case 'CLASSIFY': {
+          const it = this.items[evt.target];
+          if (!it) { o.error = 'UNKNOWN_TARGET'; o.notes.push('No such item in this scenario.'); return o; }
+          it.classifiedAs = evt.value; it.inspected = true;
+          o.accepted = true;
+          const truth = ITEMS[evt.target].truth;
+          if (evt.value !== truth) {
+            const critical = truth === 'MR_UNSAFE';
+            o.violations.push(this._violation({
+              rule: critical ? 'R-EQ-05' : 'R-EQ-02', subject: 'class:' + evt.target,
+              evidence: `${itemName(evt.target)} was classified as ${labelText(evt.value)}. ${ITEMS[evt.target].note}`,
+            }));
+          } else {
+            o.notes.push(`${itemName(evt.target)} classified as ${labelText(evt.value)}.`);
+          }
+          if (truth !== 'MR_CONDITIONAL') it.conditionsConfirmed = false;
+          return o;
+        }
+
+        case 'CONFIRM_CONDITIONS': {
+          const it = this.items[evt.target];
+          if (!it) { o.error = 'UNKNOWN_TARGET'; o.notes.push('No such item in this scenario.'); return o; }
+          if (it.classifiedAs !== 'MR_CONDITIONAL') { o.notes.push('Classify the item as MR Conditional before confirming conditions.'); return o; }
+          if (ITEMS[evt.target].truth !== 'MR_CONDITIONAL') { o.notes.push('This item is not MR Conditional; there are no conditions to confirm.'); return o; }
+          it.conditionsConfirmed = true; o.accepted = true;
+          o.notes.push(`Conditions for ${itemName(evt.target).toLowerCase()} confirmed against its labelling (simulated).`);
+          return o;
+        }
+
+        case 'MOVE': {
+          const it = this.items[evt.target];
+          if (!it) { o.error = 'UNKNOWN_TARGET'; o.notes.push('No such item in this scenario.'); return o; }
+          if (it.zone === evt.value) { o.notes.push('Item is already there.'); return o; }
+          if (evt.value === 'ZONE_IV') {
+            const truth = ITEMS[evt.target].truth;
+            let check = null;
+            if (truth === 'MR_UNSAFE') check = { rule: 'R-EQ-03', subject: 'move:' + evt.target, evidence: `You tried to move the ${itemName(evt.target).toLowerCase()} into Zone IV. The move was blocked.` };
+            else if (!it.classifiedAs) check = { rule: 'R-EQ-06', subject: 'move:' + evt.target, evidence: `You tried to move the ${itemName(evt.target).toLowerCase()} into Zone IV before classifying it. The move was blocked.` };
+            else if (truth === 'MR_CONDITIONAL' && !it.conditionsConfirmed) check = { rule: 'R-EQ-04', subject: 'move:' + evt.target, evidence: `You tried to move the ${itemName(evt.target).toLowerCase()} into Zone IV before confirming its conditions. The move was blocked.` };
+            if (check) { o.violations.push(this._violation(check)); o.canProceed = false; return o; }
+          }
+          it.zone = evt.value; o.accepted = true;
+          o.effects.push({ type: 'move', id: evt.target, zone: evt.value });
+          o.notes.push(`${itemName(evt.target)} moved to ${ZONES[evt.value].text}.`);
+          return o;
+        }
+
+        case 'REMOVE_PERSONAL_ITEM': {
+          const item = p.personal.find(x => x.id === evt.target);
+          if (!item) { o.error = 'UNKNOWN_TARGET'; o.notes.push('The patient does not have that item.'); return o; }
+          if (item.removed) { o.notes.push('Already removed.'); return o; }
+          item.removed = true; o.accepted = true;
+          o.effects.push({ type: 'personal', id: evt.target });
+          o.notes.push(`${PERSONAL_ITEMS[evt.target].name} removed and stored in the locker.`);
+          return o;
+        }
+      }
+      o.error = 'UNHANDLED'; return o;
+    }
+
+    markFeedbackShown(n) { const o = this.log[n - 1]; if (o) o.feedbackShown = true; }
+
+    close(status) {
+      if (this.status === 'active') { this.status = status; this.endedAt = this.clock(); }
+    }
+
+    summary() {
+      const v = this.violations();
+      const byCategory = {};
+      for (const x of v) if (!x.repeat) byCategory[x.category] = (byCategory[x.category] || 0) + 1;
+      const correct = this.log.filter(o => o.accepted && o.violations.length === 0 && !o.error).length;
+      const incorrect = this.log.filter(o => o.violations.length > 0).length;
+      return {
+        scenarioId: this.scenarioId, scenarioTitle: this.scenario.title, attemptNo: this.attemptNo,
+        status: this.status, completed: this.isComplete(), passed: this.passed(),
+        score: this.score(), criticalCount: this.criticalCount(),
+        durationMs: (this.endedAt || this.clock()) - this.startedAt,
+        correctActions: correct, incorrectActions: incorrect, events: this.log.length,
+        violationsUnique: Object.keys(this.deductions).length, byCategory,
+        criticalCategories: [...new Set(v.filter(x => x.severity === 'critical').map(x => x.category))],
+        checkpoints: Object.fromEntries(this.order.map(id => [id, { ...this.checkpoints[id] }])),
+      };
+    }
+  }
+
+  /* ---------------------------------------------------------------
+   * 6. Session — a trainee's run of attempts
+   * ------------------------------------------------------------- */
+  let _sessionCounter = 0;
+  function makeSessionId(clock) {
+    _sessionCounter++;
+    const d = new Date(clock());
+    const pad = n => String(n).padStart(2, '0');
+    return `S-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}-${_sessionCounter}`;
+  }
+
+  class Session {
+    constructor(opts = {}) {
+      this.clock = opts.clock || defaultClock;
+      this.id = opts.id || makeSessionId(this.clock);
+      this.trainee = opts.trainee || 'Trainee 01';
+      this.startedAt = this.clock();
+      this.attempts = [];
+      this.recommendations = [];
+      this.start(opts.scenarioId || 'standard');
+    }
+    get current() { return this.attempts[this.attempts.length - 1]; }
+    retriesFor(scenarioId) { return this.attempts.filter(a => a.scenarioId === scenarioId && a.status === 'reset').length; }
+    get totalRetries() { return this.attempts.filter(a => a.status === 'reset').length; }
+
+    /* closeAs: 'reset' (trainee retry, counted) or 'switched' (trainer changed scenario, not counted). */
+    start(scenarioId, closeAs = 'switched') {
+      if (this.current) this.current.close(closeAs);
+      const n = this.attempts.filter(a => a.scenarioId === scenarioId).length + 1;
+      const a = new Attempt(scenarioId, { clock: this.clock, attemptNo: n });
+      this.attempts.push(a);
+      return a;
+    }
+
+    handle(evt) {
+      const a = this.current;
+      const out = a.handle(evt);
+      if (out.accepted && (out.event === 'RESET_SCENARIO')) {
+        out.effects.push({ type: 'reset' });
+        this.start(a.scenarioId, 'reset');
+        out.notes.push(`Attempt ${a.attemptNo} closed as reset. Attempt ${this.current.attemptNo} started.`);
+      }
+      if (out.effects.some(e => e.type === 'complete')) {
+        const rec = recommendNext(this.results());
+        rec.afterAttempt = this.attempts.length;
+        this.recommendations.push(rec);
+        out.recommendation = rec;
+      }
+      return out;
+    }
+
+    /* Completed attempts only (resets are counted as retries, not results). */
+    results() { return this.attempts.filter(a => a.status === 'completed').map(a => a.summary()); }
+
+    report() {
+      return {
+        kind: 'MRISafeTwin.sessionReport', version: 1,
+        disclaimer: 'Educational prototype. Rules are illustrative and not a substitute for local MR safety procedures or certification.',
+        sessionId: this.id, trainee: this.trainee,
+        startedAt: new Date(this.startedAt).toISOString(), exportedAt: new Date(this.clock()).toISOString(),
+        dataOrigin: 'Recorded in this browser session (not demonstration data).',
+        scoring: { ...SCORING, severityPoints: Object.fromEntries(Object.entries(SEVERITY).map(([k, v]) => [k, v.points])), dedupe: 'Each rule is penalised once per subject per attempt; repeats are logged with 0 points.' },
+        totalRetries: this.totalRetries,
+        attempts: this.attempts.map(a => ({ ...a.summary(), log: a.log, violations: a.violations() })),
+        recommendations: this.recommendations,
+      };
+    }
+  }
+
+  /* ---------------------------------------------------------------
+   * 7. Adaptive scenario selection (transparent, rule-ordered)
+   * ------------------------------------------------------------- */
+  const ADAPT_RULES = [
+    { id: 'AD-1', text: 'Two consecutive attempts did not pass → guided practice with hints.' },
+    { id: 'AD-2', text: 'Passed → unlock the next level (drills return to the last full scenario).' },
+    { id: 'AD-3', text: 'Not passed with a critical or ≥2 equipment violations → equipment classification drill.' },
+    { id: 'AD-4', text: 'Not passed with a critical or ≥2 screening violations → screening drill.' },
+    { id: 'AD-5', text: 'Otherwise → repeat the same scenario.' },
+  ];
+
+  function recommendNext(results) {
+    if (!results.length) return { scenarioId: 'guided', rule: 'AD-0', reason: 'No completed attempts yet; starting with guided practice.' };
+    const last = results[results.length - 1];
+    const prev = results[results.length - 2];
+    const lastCore = [...results].reverse().find(r => SCENARIOS[r.scenarioId].kind === 'core');
+    const pick = (scenarioId, rule, reason) => ({ scenarioId, rule, reason, basedOn: { scenarioId: last.scenarioId, score: last.score, passed: last.passed, byCategory: last.byCategory } });
+
+    if (!last.passed && prev && !prev.passed && last.scenarioId !== 'guided') {
+      return pick('guided', 'AD-1', `Attempts ${results.length - 1} and ${results.length} did not pass. Guided practice shows each next step.`);
+    }
+    if (last.passed) {
+      if (SCENARIOS[last.scenarioId].kind === 'drill') {
+        const back = lastCore ? lastCore.scenarioId : 'standard';
+        return pick(back, 'AD-2', `Drill passed (score ${last.score}). Returning to ${SCENARIOS[back].title}.`);
+      }
+      const next = PROGRESSION[last.scenarioId];
+      return pick(next, 'AD-2', next === last.scenarioId
+        ? `Passed ${SCENARIOS[last.scenarioId].title} (score ${last.score}). Highest level reached; repeat to consolidate.`
+        : `Passed ${SCENARIOS[last.scenarioId].title} with no critical violations (score ${last.score}). Unlocking ${SCENARIOS[next].title}.`);
+    }
+    const cat = last.byCategory || {};
+    const v = results.length; // completed-attempt index for messages
+    const critIn = c => (last.criticalCategories || []).includes(c);
+    if ((cat.equipment || 0) >= 2 || critIn('equipment')) {
+      return pick('drill-equipment', 'AD-3', `Attempt ${v} had ${cat.equipment || 0} equipment violation(s). A focused classification drill comes next.`);
+    }
+    if ((cat.screening || 0) >= 2 || critIn('screening')) {
+      return pick('drill-screening', 'AD-4', `Attempt ${v} had ${cat.screening || 0} screening violation(s). A focused screening drill comes next.`);
+    }
+    return pick(last.scenarioId, 'AD-5', `Attempt ${v} did not pass (score ${last.score}, ${last.criticalCount} critical). Repeating ${SCENARIOS[last.scenarioId].title}.`);
+  }
+
+  /* ---------------------------------------------------------------
+   * 8. Serial protocol (newline-delimited JSON, v1)
+   * ------------------------------------------------------------- */
+  const DEVICE_TYPES = ['hello', 'action', 'hb', 'cal', 'err', 'raw', 'log', 'pong', 'imu', 'gesture'];
+  const GESTURES = ['tap', 'double_tap', 'flick_left', 'flick_right'];
+  const MAX_LINE = 512;
+
+  function parseLine(line) {
+    if (typeof line !== 'string') return { ok: false, error: 'NOT_TEXT' };
+    const s = line.trim();
+    if (!s) return { ok: false, error: 'EMPTY' };
+    if (s.length > MAX_LINE) return { ok: false, error: 'TOO_LONG', raw: s.slice(0, 80) };
+    if (s[0] !== '{') return { ok: false, error: 'NOT_JSON', raw: s.slice(0, 80) }; // boot ROM text, etc.
+    let msg;
+    try { msg = JSON.parse(s); } catch (e) { return { ok: false, error: 'BAD_JSON', raw: s.slice(0, 80) }; }
+    if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return { ok: false, error: 'NOT_OBJECT', raw: s.slice(0, 80) };
+    if (msg.v !== undefined && msg.v !== PROTOCOL_VERSION) return { ok: false, error: 'VERSION_MISMATCH', raw: s.slice(0, 80) };
+    if (!DEVICE_TYPES.includes(msg.type)) return { ok: false, error: 'UNKNOWN_TYPE', raw: s.slice(0, 80) };
+    if (msg.type === 'action') {
+      if (typeof msg.event === 'string' && EVENT_ALIASES[msg.event]) msg.event = EVENT_ALIASES[msg.event];
+      if (!ATTEST_EVENTS.includes(msg.event)) return { ok: false, error: 'UNKNOWN_EVENT', raw: s.slice(0, 80) };
+      if (msg.id !== undefined && PAD_EVENT[msg.id] !== msg.event) return { ok: false, error: 'PAD_EVENT_MISMATCH', raw: s.slice(0, 80) };
+      if (!Number.isInteger(msg.seq) || msg.seq < 0) return { ok: false, error: 'BAD_SEQ', raw: s.slice(0, 80) };
+    }
+    if (msg.type === 'imu') {
+      if (!Number.isFinite(msg.r) || !Number.isFinite(msg.p) || Math.abs(msg.r) > 180 || Math.abs(msg.p) > 180) return { ok: false, error: 'BAD_IMU', raw: s.slice(0, 80) };
+    }
+    if (msg.type === 'gesture') {
+      if (!GESTURES.includes(msg.g)) return { ok: false, error: 'UNKNOWN_GESTURE', raw: s.slice(0, 80) };
+      if (!Number.isInteger(msg.seq) || msg.seq < 0) return { ok: false, error: 'BAD_SEQ', raw: s.slice(0, 80) };
+    }
+    return { ok: true, msg };
+  }
+
+  /* Splits an arbitrary stream of text chunks into complete lines. */
+  class LineBuffer {
+    constructor() { this.buf = ''; }
+    push(chunk) {
+      this.buf += chunk;
+      if (this.buf.length > MAX_LINE * 8) this.buf = this.buf.slice(-MAX_LINE); // runaway guard
+      const parts = this.buf.split(/\r?\n/);
+      this.buf = parts.pop();
+      return parts;
+    }
+    reset() { this.buf = ''; }
+  }
+
+  /* Drops duplicate / replayed action messages using (boot, seq). */
+  class SeqTracker {
+    constructor() { this.boot = null; this.last = -1; }
+    hello(boot) { if (boot !== this.boot) { this.boot = boot; this.last = -1; return 'new-boot'; } return 'same-boot'; }
+    check(msg) {
+      if (msg.boot !== undefined && msg.boot !== this.boot) this.hello(msg.boot);
+      if (msg.seq <= this.last) return 'duplicate';
+      const gap = this.last >= 0 && msg.seq > this.last + 1;
+      this.last = msg.seq;
+      return gap ? 'gap' : 'ok';
+    }
+  }
+
+  /* ---------------------------------------------------------------
+   * 9. Report export
+   * ------------------------------------------------------------- */
+  const CSV_COLUMNS = ['session', 'attempt', 'scenario', 'n', 't_ms', 'wall', 'source', 'device_seq', 'pad', 'event', 'target', 'value',
+    'received', 'accepted', 'checkpoint_completed', 'violation_rules', 'severity', 'points', 'feedback_shown', 'notes', 'error'];
+
+  function csvCell(v) {
+    const s = v === null || v === undefined ? '' : String(v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+
+  function toCSV(session) {
+    const rows = [CSV_COLUMNS.join(',')];
+    session.attempts.forEach((a, i) => {
+      for (const o of a.log) {
+        rows.push([
+          session.id, i + 1, a.scenarioId, o.n, o.at, o.wall, o.src, o.devSeq, o.pad, o.event, o.target, o.value,
+          o.received, o.accepted, o.checkpointCompleted || '', o.violations.map(v => v.rule).join(' '),
+          o.violations.map(v => v.severity).join(' '), o.violations.reduce((s, v) => s + v.points, 0),
+          o.feedbackShown, o.notes.join(' | '), o.error || '',
+        ].map(csvCell).join(','));
+      }
+    });
+    return rows.join('\n');
+  }
+
+  return {
+    PROTOCOL_VERSION, PADS, PAD_EVENT, ATTEST_EVENTS, SCENE_EVENTS, EVENT_ALIASES, LABELS, ZONES,
+    SEVERITY, SCORING, RULES, REQ_LABELS, BASIS, ITEMS, PERSONAL_ITEMS, SCENARIOS, PROGRESSION, CHECKPOINTS, ADAPT_RULES,
+    GESTURES, validateEvent, Attempt, Session, recommendNext, parseLine, LineBuffer, SeqTracker, toCSV,
+  };
+});
+
+</script>
+<script>
+/*
+ * MRISafe Twin — handheld controller mapping (pure, no DOM)
+ * Browser: window.MRIController. Node: require().
+ *
+ * Tilt works like a joystick: inside the dead zone nothing moves; beyond it the
+ * speed rises smoothly up to a maximum. This avoids yaw drift entirely (no absolute
+ * heading is needed) and is easy to hold still.
+ */
+(function (root, factory) {
+  const api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.MRIController = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+
+  const DEFAULTS = { deadDeg: 7, fullDeg: 32, maxOrbitDegPerSec: 75, maxPointerPxPerSec: 950, invertPitch: false };
+
+  /** Map one tilt angle (deg) to a signed fraction in [-1, 1] with a dead zone and smooth ramp. */
+  function shape(angle, cfg = DEFAULTS) {
+    const a = Math.abs(angle);
+    if (!Number.isFinite(a) || a <= cfg.deadDeg) return 0;
+    const k = Math.min(1, (a - cfg.deadDeg) / (cfg.fullDeg - cfg.deadDeg));
+    return Math.sign(angle) * k * k * (3 - 2 * k); // smoothstep
+  }
+
+  /** Orbit increments (radians) for this time step. roll → azimuth, pitch → elevation. */
+  function orbitStep(rollDeg, pitchDeg, dtSec, cfg = DEFAULTS) {
+    const dt = Math.max(0, Math.min(dtSec, 0.2));
+    const rate = cfg.maxOrbitDegPerSec * Math.PI / 180;
+    return {
+      dAz: -shape(rollDeg, cfg) * rate * dt || 0,
+      dEl: (cfg.invertPitch ? -1 : 1) * shape(pitchDeg, cfg) * rate * dt,
+    };
+  }
+
+  /** Pointer movement (pixels) for this time step. */
+  function pointerStep(rollDeg, pitchDeg, dtSec, cfg = DEFAULTS) {
+    const dt = Math.max(0, Math.min(dtSec, 0.2));
+    return {
+      dx: shape(rollDeg, cfg) * cfg.maxPointerPxPerSec * dt,
+      dy: (cfg.invertPitch ? -1 : 1) * shape(pitchDeg, cfg) * cfg.maxPointerPxPerSec * dt,
+    };
+  }
+
+  /** Wand meter: change in field magnitude (µT) → 0..1 level and a plain-language reading. */
+  function wandLevel(dmagUT) {
+    const d = Math.abs(dmagUT || 0);
+    const level = Math.min(1, d / 60);
+    const text = d < 3 ? 'Background' : d < 15 ? 'Weak change' : d < 40 ? 'Strong change' : 'Very strong change';
+    return { level, text };
+  }
+
+  /* Pad meaning in each part of the app. */
+  const PAD_MAP = {
+    train: {
+      T1: 'Screening sign-off', T2: 'Equipment verified', T3: 'Zone IV access', T4: 'Final clearance', T5: 'Proceed to scan', T6: 'Reset attempt',
+    },
+    learn: {
+      T1: 'Previous chapter', T2: 'Next chapter', T3: 'Peel a layer', T4: 'Restore a layer', T5: 'Explode / assemble', T6: 'Reset view',
+    },
+  };
+  const GESTURE_MAP = {
+    train: { tap: 'Select what the cursor is on', double_tap: 'Reset the camera', flick_left: 'Toggle orbit / point', flick_right: 'Toggle orbit / point' },
+    learn: { tap: 'Play the chapter action', double_tap: 'Reset the camera', flick_left: 'Previous chapter', flick_right: 'Next chapter' },
+  };
+
+  return { DEFAULTS, shape, orbitStep, pointerStep, wandLevel, PAD_MAP, GESTURE_MAP };
+});
+
+</script>
+<script>
+/* MRISafe Twin knowledge base: the offline coach's source of truth.
+ *
+ * Each entry: id, topic, q (ways a trainee might ask it), tags (extra keywords),
+ * a (the answer, plain English, 2–4 sentences), see (rule ids or chapter ids it
+ * relates to). Answers are general teaching points modelled on common MR safety and
+ * MRI physics texts (ACR Manual on MR Safety, ASTM F2503 terminology). They are not
+ * clinical protocol. Local policy and an MR safety officer always decide.
+ *
+ * Add an entry by appending to MRIKB. The coach needs no other change.
+ */
+window.MRIKB = [
+  /* ---------- MR safety: the core idea ---------- */
+  { id: 'field-always-on', topic: 'Safety', q: ['Why is the magnetic field always on?', 'Can the magnet be turned off?'],
+    tags: 'magnet superconducting persistent current off power',
+    a: 'The magnet is superconducting. Once charged, current circulates in a closed loop of superconducting wire with no resistance, so the field persists without power. Switching it off means a controlled ramp-down, which takes time and is not done between patients. Treat the field as always present.',
+    see: ['R-EQ-03', 'quench'] },
+  { id: 'projectile', topic: 'Safety', q: ['What is the projectile effect?', 'Why can a wheelchair fly at the magnet?'],
+    tags: 'projectile ferromagnetic attraction force missile steel oxygen cylinder',
+    a: 'Ferromagnetic objects are pulled toward the magnet bore with force that increases steeply as they get closer. Oxygen cylinders, floor buffers, wheelchairs and gurneys have caused serious injuries and deaths. The rule is to keep anything that is not labelled MR Safe or MR Conditional out of Zone IV.',
+    see: ['R-EQ-03', 'R-EQ-05'] },
+  { id: 'mr-safe-conditional-unsafe', topic: 'Equipment', q: ['What do MR Safe, MR Conditional and MR Unsafe mean?', 'What is the difference between MR Safe and MR Conditional?'],
+    tags: 'label classification safe conditional unsafe astm f2503 symbol',
+    a: 'MR Safe: no hazard in any MR environment; for example plastic or wood. MR Conditional: safe only under the conditions stated in its labelling, such as a maximum field strength or gradient slew rate. MR Unsafe: a known hazard in the MR environment; it must stay out of Zone IV. Classify from the manufacturer\'s labelling, not from appearance.',
+    see: ['R-EQ-02', 'R-EQ-04', 'R-EQ-05'] },
+  { id: 'unlabelled-items', topic: 'Equipment', q: ['What do I do with an item that has no MR label?', 'Unlabelled equipment is safe, right?'],
+    tags: 'unknown no label unlabelled status steel test',
+    a: 'Unlabelled items have unknown MR status and are handled as MR Unsafe until their status is established from labelling or from the MR safety officer. Do not assume an item is safe because it looks like plastic or because it has always been used. The assessor treats "Safe" on an unlabelled item as a critical error.',
+    see: ['R-EQ-02', 'R-EQ-05'] },
+  { id: 'zones', topic: 'Safety', q: ['What are Zones I to IV?', 'Explain the MRI safety zones.'],
+    tags: 'zone access area room control magnet room staging screening reception',
+    a: 'Zone I is public. Zone II is the reception and screening area where patients are checked and staging happens. Zone III is the controlled boundary between the general area and the magnet room, with access limited to trained staff and screened patients. Zone IV is the magnet room itself, where the field is strong and ferromagnetic items must not enter.',
+    see: ['R-SEQ-02', 'R-EQ-03'] },
+  { id: 'fringe-field', topic: 'Safety', q: ['What is the fringe field?', 'How far does the magnetic field reach?'],
+    tags: 'stray field fringe 5 gauss line boundary extent room',
+    a: 'The fringe field is the magnetic field that leaks outside the magnet. Its strength falls with distance but can still be strong near the magnet. Sites usually mark the 5 gauss (0.5 mT) line on the floor and use it to limit access for pacemaker wearers and to plan where ferromagnetic equipment can be kept.',
+    see: ['R-EQ-03'] },
+  { id: 'quench-safety', topic: 'Safety', q: ['What is a quench and why is it dangerous?', 'What happens in a magnet quench?'],
+    tags: 'quench helium boil off oxygen asphyxia vent emergency',
+    a: 'A quench is the sudden loss of superconductivity. The stored energy turns into heat, the liquid helium boils off very quickly, and the field collapses. The gas is cold and displaces oxygen, so people can be asphyxiated in the room. Staff must know the emergency quench button and the vent pipe, and the room must be evacuated.',
+    see: ['quench'] },
+  { id: 'emergency-quench-button', topic: 'Safety', q: ['What does the emergency quench button do?'],
+    tags: 'emergency button quench stop',
+    a: 'The emergency quench button forces a controlled quench to remove the magnetic field fast, for example when someone is trapped against the magnet or a ferromagnetic object is stuck. It is a last resort because it costs helium and the magnet needs days or weeks to recover. Use it only as your site procedure says.',
+    see: ['quench'] },
+  /* ---------- screening ---------- */
+  { id: 'screening-form', topic: 'Screening', q: ['Why must every patient be screened?', 'What is MRI screening for?'],
+    tags: 'screening form questionnaire implant pacemaker metal history',
+    a: 'Screening finds people who could be harmed by the field or RF energy: pacemakers and some implants, cochlear implants, metal fragments or previous eye or head injuries, and some infusion pumps. Screening is done before the patient enters Zone III or IV, and the answers are checked against the device labelling.',
+    see: ['R-SCR-01', 'R-SCR-02'] },
+  { id: 'two-identifiers', topic: 'Screening', q: ['Why do I need two identifiers?', 'What is the wristband check for?'],
+    tags: 'identity identifiers name mrn dob wristband patient id match',
+    a: 'Two identifiers, such as name and date of birth or MRN, must match the scan request and the wristband. This stops the screening answers, consent and images from being attributed to the wrong person. Confirm at the start of screening and again before the scan.',
+    see: ['R-ID-01'] },
+  { id: 'implants-cards', topic: 'Screening', q: ['What if the implant card says MR Conditional?', 'Can I scan a patient with a device card?'],
+    tags: 'implant card device pacemaker conditional escalate radiologist officer',
+    a: 'A card saying MR Conditional is not the same as clearance for this scan. The labelling conditions, such as field strength, SAR and scan limits, must be checked for this exam. Refer the case to the MR safety officer or supervising radiologist before sign-off, as the simulator does.',
+    see: ['R-SCR-02'] },
+  { id: 'pacemaker', topic: 'Screening', q: ['Can patients with pacemakers have MRI?', 'Pacemaker and MRI'],
+    tags: 'pacemaker icd cardiac device heart implant',
+    a: 'Many pacemakers and defibrillators are MR Conditional, but not all, and older devices may be unsafe. Scanning needs the device model, lead configuration and programming to be checked against the labelling, usually with the device clinic. Never scan a patient with a device whose status is unknown.',
+    see: ['R-SCR-02'] },
+  { id: 'metal-fragments', topic: 'Screening', q: ['What about metal fragments in the eye?', 'Patient injured by metal, can they have MRI?'],
+    tags: 'metal fragment eye orbit welder injury shrapnel',
+    a: 'Metal in the eye or orbit is a serious risk, because a moving fragment can cause blindness. A history of metalwork, welding, or metal injury needs review and often imaging with X-ray first. Document the answer on the form and refer if there is any doubt.',
+    see: ['R-SCR-01'] },
+  { id: 'personal-items', topic: 'Access', q: ['Which personal items must be removed?', 'Can a patient keep their phone or hair clip?'],
+    tags: 'personal items phone keys jewellery hair clip coins zip bra piercing locker',
+    a: 'Remove anything metallic or electronic: phones, keys, coins, jewellery, hair clips, underwire, watches, bank cards and hearing aids. Store them in a locker outside Zone IV. Patients can be checked again at the door because items are often picked up while waiting.',
+    see: ['R-ACC-01', 'R-ACC-02'] },
+  { id: 'tattoos-piercings', topic: 'Screening', q: ['Are tattoos and piercings a problem?', 'Do body piercings need removing?'],
+    tags: 'tattoo piercing cosmetic makeup eyeliner heat burn',
+    a: 'Some older tattoo inks and metallic eyeliner can contain metal and heat during scanning. Remove body piercings where possible. Ask about recent cosmetic procedures, and report any burning or itching during the scan, since the RF energy can heat the skin.',
+    see: ['R-SCR-01'] },
+  { id: 'pregnancy', topic: 'Screening', q: ['Can a pregnant patient have an MRI?', 'Is MRI safe in pregnancy?'],
+    tags: 'pregnancy pregnant foetus fetus first trimester contrast',
+    a: 'MRI without contrast is generally considered safe in pregnancy, but sites have policies about the first trimester and about gadolinium, which is avoided unless essential. Always ask about pregnancy on the form and follow local policy and the referring clinician\'s judgement.',
+    see: ['R-SCR-01'] },
+  { id: 'claustrophobia', topic: 'Patient care', q: ['What do I do with a claustrophobic patient?', 'Patient anxious in the scanner'],
+    tags: 'claustrophobia anxiety panic fear calm sedation music mirror',
+    a: 'Explain each step, give a call bell, offer music and a mirror or view of the room, and agree a stop signal. Practise breathing. If anxiety is severe, the referring clinician can consider sedation or an open scanner. Never push a patient into the bore against their will.',
+    see: ['R-ACC-02'] },
+  { id: 'contrast-agents', topic: 'Screening', q: ['What is gadolinium and why is kidney function checked?', 'Are MRI contrast agents safe?'],
+    tags: 'gadolinium contrast agent kidney gfr nsf renal macrocyclic',
+    a: 'Gadolinium-based contrast agents shorten T1 relaxation to brighten tissues. In patients with severely reduced kidney function, a rare condition called nephrogenic systemic fibrosis is a concern, so the eGFR is checked and macrocyclic agents are preferred. Follow the site contrast policy.',
+    see: ['R-SCR-01'] },
+  { id: 'sedation', topic: 'Patient care', q: ['Can patients be sedated for MRI?', 'Sedation and scanning'],
+    tags: 'sedation sedated anaesthesia child monitor oxygen',
+    a: 'Sedation is given by trained staff, with continuous monitoring of oxygen, heart rate and breathing, and with MR-compatible monitoring equipment. Staff must know the emergency equipment and the route to the patient. Children and anxious adults often need this.',
+    see: ['R-ACC-02'] },
+  { id: 'children-mri', topic: 'Patient care', q: ['How are children prepared for MRI?', 'Scanning a child without sedation'],
+    tags: 'child children paediatric infant baby sedate wrap play',
+    a: 'Preparation at the child\'s level with a parent present, a simple explanation, and a play or video option works for many children. If the child cannot stay still, the team may use feed-and-wrap for infants or sedation under the referring clinician\'s decision. Keep the same screening rules for everyone.',
+    see: ['R-SCR-01'] },
+  /* ---------- hazards during the scan ---------- */
+  { id: 'burns', topic: 'Safety', q: ['How do MRI burns happen?', 'Why do cables get hot in the scanner?'],
+    tags: 'burn heating rf energy loop cable electrode ecg skin sar',
+    a: 'Burns happen where conductive loops form, such as ECG leads, cables crossing the body, or skin-to-skin contact. Induced currents heat those loops. Keep leads straight and short, avoid loops, pad contact points, and keep the patient\'s arms and legs from touching the bore.',
+    see: ['R-SCR-01'] },
+  { id: 'sar', topic: 'Safety', q: ['What is SAR?', 'Specific absorption rate explained'],
+    tags: 'sar specific absorption rate heating watts per kilogram',
+    a: 'SAR is the RF power absorbed per kilogram of tissue, measured in watts per kilogram. The RF pulses heat tissue, so scanners limit SAR. Higher field strengths and faster sequences raise SAR, and the operator controls it through sequence settings.',
+    see: ['rf-pulse'] },
+  { id: 'acoustic-noise', topic: 'Safety', q: ['Why is the MRI so loud?', 'Do patients need hearing protection?'],
+    tags: 'noise loud sound acoustic earplugs hearing gradient tapping',
+    a: 'Rapid switching of the gradient coils in the magnetic field pushes the coils, which produces loud knocking. Noise can exceed safe levels, so patients and staff need earplugs or headphones for every scan. Sequence choice and gradient limits also affect noise.',
+    see: ['gradients'] },
+  { id: 'ferromagnetic-detection', topic: 'Safety', q: ['How do ferromagnetic detectors work?', 'What does a magnetometer detect?'],
+    tags: 'detector magnetometer gaussmeter ferromagnetic wand screening metal detect',
+    a: 'Handheld ferromagnetic detectors sense changes in a magnetic field near the sensor, so they flag steel and nickel objects. They support screening but never replace it: they miss non-magnetic hazards and objects with low susceptibility. The simulator\'s wand meter shows the same principle with the MPU9250 magnetometer.',
+    see: ['R-EQ-02'] },
+  { id: 'resistance-hazard', topic: 'Safety', q: ['Can the magnet heat up a patient with a metal implant?', 'Implants and heating'],
+    tags: 'heat implant metal rf induced heating',
+    a: 'Metal implants can heat during the scan, especially long or thick metal such as leads and sternal wires. Conditional implants state the maximum local SAR or scan time in their labelling. Follow those limits and ask the patient to report pain or heat during the scan.',
+    see: ['R-SCR-02'] },
+  { id: 'emergency-response', topic: 'Safety', q: ['What if someone is pulled toward the magnet?', 'Emergency in the magnet room'],
+    tags: 'emergency trapped pinned cardiac arrest resuscitation code',
+    a: 'Do not enter the magnet room to rescue someone pinned by a ferromagnetic object, because you would be pulled in too. Call for help, switch to your emergency procedure, and move people out. For cardiac arrest, the resuscitation team must be able to enter with non-magnetic equipment only.',
+    see: ['R-EQ-03'] },
+  /* ---------- the magnet and hardware ---------- */
+  { id: 'superconducting-magnet', topic: 'Hardware', q: ['How does the superconducting magnet work?', 'Why do MRI magnets use superconductors?'],
+    tags: 'magnet superconducting niobium titanium coil cold current tesla',
+    a: 'Coils of niobium-titanium wire are cooled to about 4 K in liquid helium. Below that temperature they carry current with no resistance, so they can produce a strong, stable field of 1.5 T or 3 T without consuming power. The field is set by the stored current.',
+    see: ['magnet'] },
+  { id: 'helium', topic: 'Hardware', q: ['Why is liquid helium used?', 'What is the cryostat?'],
+    tags: 'helium cryostat cooling boil off zero refill vacuum',
+    a: 'Helium is the only coolant that stays liquid near 4 K. The cryostat is a vacuum-insulated vessel with radiation shields that keeps the coils cold. Modern magnets are sealed with cryocoolers that reduce boil-off, but a quench still releases helium into the room.',
+    see: ['cryostat'] },
+  { id: 'shimming', topic: 'Hardware', q: ['What is shimming?', 'Why does the magnet need shim coils?'],
+    tags: 'shim homogeneity uniform field correction passive active',
+    a: 'Shimming makes the field as uniform as possible across the imaging region. Passive shims are small steel pieces placed in the magnet. Active shims are coils driven by currents to cancel small field errors from the body, the magnet, or the room. Good shimming gives sharp images and fat suppression.',
+    see: ['shim'] },
+  { id: 'gradient-coils', topic: 'Hardware', q: ['What do gradient coils do?', 'Why do we need gradients?'],
+    tags: 'gradient coil x y z spatial encoding linear field slew',
+    a: 'Gradient coils add a field that changes linearly along x, y and z, so the Larmor frequency varies with position. That lets the scanner select a slice and encode position in the signal. Gradients are switched quickly, which causes the noise and some peripheral nerve stimulation.',
+    see: ['gradients'] },
+  { id: 'rf-coils', topic: 'Hardware', q: ['What do RF coils do?', 'What is the difference between transmit and receive coils?'],
+    tags: 'rf coil transmit receive head body surface antenna b1 signal',
+    a: 'The transmit coil produces a rotating RF field at the Larmor frequency that tips the magnetisation. Receive coils, often placed close to the body, pick up the weak signal from precessing spins. Local receive coils give better signal-to-noise near the anatomy of interest.',
+    see: ['rf-pulse'] },
+  { id: 'faraday-cage', topic: 'Hardware', q: ['What is the Faraday cage for?', 'Why is the scan room lined with copper?'],
+    tags: 'faraday cage shield copper room rf interference signal',
+    a: 'The copper or aluminium shielding around the scan room is a Faraday cage. It blocks external radio signals from entering, which would corrupt the faint MR signal, and stops the scanner\'s RF from leaking out. Doors have RF gaskets for this reason, so do not prop them open.',
+    see: ['rf-coils'] },
+  { id: 'field-strength', topic: 'Hardware', q: ['What is the difference between 1.5 T and 3 T?', 'Why do some scanners have higher field strength?'],
+    tags: 'tesla field strength 1.5 3 7 signal noise snr artefact',
+    a: 'Higher field strength gives more signal and better resolution, but also more artefacts, more SAR and more chemical-shift problems. 1.5 T is common in clinics and 3 T is common for detailed imaging. A tesla is 10 000 gauss, and Earth\'s field is about half a gauss.',
+    see: ['magnet'] },
+  { id: 'table-bore', topic: 'Hardware', q: ['What is the bore and the patient table?', 'Why does the table move?'],
+    tags: 'bore table couch patient moves in out isocentre',
+    a: 'The bore is the cylindrical opening where the patient lies. The table moves the patient so the region to be imaged sits at the isocentre, the point of most uniform field and best gradient linearity. The table moving into the bore is the final step of the procedure in this simulator.',
+    see: ['R-SCAN-01'] },
+  /* ---------- physics ---------- */
+  { id: 'protons-precess', topic: 'Physics', q: ['What is precession?', 'Why do protons spin in the magnet?'],
+    tags: 'precession spin proton magnetisation align larmor nuclei',
+    a: 'Hydrogen protons have spin and a magnetic moment, so in a strong field they precess like a spinning top around the field direction. Their axes align slightly more with the field than against it, creating a small net magnetisation along the field.',
+    see: ['larmor'] },
+  { id: 'larmor', topic: 'Physics', q: ['What is the Larmor frequency?', 'Calculate the Larmor frequency at 1.5 T'],
+    tags: 'larmor frequency gyromagnetic ratio 42.58 mhz tesla formula',
+    a: 'The Larmor frequency is f = (γ/2π) × B0. For protons γ/2π is 42.58 MHz per tesla, so at 1.5 T the frequency is 63.87 MHz and at 3 T it is 127.73 MHz. RF at exactly this frequency is absorbed by the protons, which is why the scanner can select them.',
+    see: ['larmor'] },
+  { id: 'rf-pulse', topic: 'Physics', q: ['What does an RF pulse do?', 'What is a 90 degree pulse?'],
+    tags: 'rf pulse flip angle 90 180 excitation tip magnetisation resonance',
+    a: 'An RF pulse at the Larmor frequency tips the net magnetisation away from the field. A 90° pulse moves it fully into the transverse plane, where it precesses and induces a signal in the receive coil. A 180° pulse flips it over, used to refocus spins into an echo.',
+    see: ['rf-excitation'] },
+  { id: 'signal', topic: 'Physics', q: ['How is the MR signal produced?', 'Where does the MRI signal come from?'],
+    tags: 'signal free induction decay fid receive induced voltage transverse',
+    a: 'After the RF pulse, the transverse magnetisation precesses and induces a small voltage in the receive coil. This decaying oscillation is the free induction decay. Its amplitude depends on the number of protons and on how quickly the transverse magnetisation fades.',
+    see: ['rf-excitation'] },
+  { id: 't1-t2', topic: 'Physics', q: ['What is the difference between T1 and T2?', 'Explain T1 and T2 relaxation.'],
+    tags: 't1 t2 relaxation longitudinal transverse recovery decay 63 37 percent',
+    a: 'T1 is the time for longitudinal magnetisation to regrow to about 63% of its final value. T2 is the time for transverse magnetisation to decay to about 37%. T1 depends on how tissue exchanges energy with its surroundings, and T2 on how spins dephase from each other. Both differ between tissues, which is the source of contrast.',
+    see: ['relaxation'] },
+  { id: 'contrast-weighting', topic: 'Physics', q: ['Why is fat bright on a T1 image?', 'What is T1-weighted versus T2-weighted?'],
+    tags: 'weighting contrast t1w t2w fat water csf bright dark image',
+    a: 'T1-weighted images show differences in longitudinal recovery. Fat recovers quickly and looks bright, and CSF looks dark. T2-weighted images show differences in transverse decay, so fluid such as CSF looks bright and fat is intermediate. Repetition time and echo time choose the weighting.',
+    see: ['relaxation'] },
+  { id: 'tr-te', topic: 'Physics', q: ['What are TR and TE?', 'Repetition time and echo time'],
+    tags: 'tr te repetition echo time sequence parameter weighting',
+    a: 'TR, repetition time, is the gap between successive excitations. Short TR gives T1 weighting because the longitudinal magnetisation has not fully recovered. TE, echo time, is when the signal is sampled after the excitation. Long TE gives T2 weighting because the transverse signal has decayed.',
+    see: ['relaxation'] },
+  { id: 'spin-echo', topic: 'Physics', q: ['What is a spin echo?', 'How does a spin echo form?'],
+    tags: 'spin echo refocus 180 dephasing inhomogeneity t2 star',
+    a: 'Spins dephase because of local field differences, which shortens the signal faster than true T2. A 180° pulse flips the spins, so the same differences reverse and the spins rephase into an echo at a time TE. The echo therefore reflects true T2 rather than the faster T2*.',
+    see: ['relaxation'] },
+  { id: 'slice-selection', topic: 'Physics', q: ['How does slice selection work?', 'Why does a gradient select a slice?'],
+    tags: 'slice selection gradient bandwidth thickness frequency plane',
+    a: 'During an RF pulse a gradient makes the Larmor frequency vary with position. An RF pulse with a narrow frequency band excites only one thin plane. Slice thickness is the bandwidth divided by (γ/2π × gradient). For example, 1 kHz bandwidth with 10 mT/m gives about 2.35 mm.',
+    see: ['slice-selection'] },
+  { id: 'frequency-phase-encoding', topic: 'Physics', q: ['What are frequency and phase encoding?', 'How does the scanner know where the signal came from in a slice?'],
+    tags: 'frequency encoding phase encoding readout spatial location k space',
+    a: 'Within a slice, the frequency-encoding gradient is on during readout, so each position has its own frequency. Phase encoding applies a gradient briefly before readout, so each step leaves a different phase across the slice. Together they fill k-space line by line.',
+    see: ['kspace'] },
+  { id: 'kspace', topic: 'Physics', q: ['What is k-space?', 'Why does the centre of k-space matter most?'],
+    tags: 'k space kspace fourier transform centre edge spatial frequency image',
+    a: 'K-space is the raw data: each point is a spatial frequency combination. The centre holds low frequencies that set the broad contrast and brightness, and the edges hold high frequencies that set fine detail and sharpness. An inverse 2D Fourier transform turns k-space into an image, which is why the simulator reconstructs from it.',
+    see: ['kspace'] },
+  { id: 'resolution-fov', topic: 'Physics', q: ['What controls resolution and field of view?', 'How do I make a sharper MRI image?'],
+    tags: 'resolution field of view fov matrix pixel voxel sharper scan time snr',
+    a: 'Field of view sets the area imaged, and the matrix size sets how many pixels cover it. Smaller pixels give sharper detail but less signal per pixel and longer scans. Signal-to-noise falls as voxels shrink, so trade-offs are normal.',
+    see: ['kspace'] },
+  { id: 'chemical-shift', topic: 'Physics', q: ['What is chemical shift?', 'Why are there dark lines at fat-water edges?'],
+    tags: 'chemical shift fat water frequency offset artefact fat saturation',
+    a: 'Fat protons resonate at a slightly lower frequency than water, about 3.5 ppm lower. The difference shows up as misregistration at fat-water boundaries and as signal voids in some sequences. Fat-saturation techniques suppress the fat signal to avoid this.',
+    see: ['shim'] },
+  { id: 'thermal-equilibrium', topic: 'Physics', q: ['Why does the magnet not affect the protons all the time?', 'Are protons always spinning in the magnet?'],
+    tags: 'thermal equilibrium polarisation boltzmann small excess',
+    a: 'Protons are always precessing in the field, but only a very small excess align with it, which is why MRI is relatively insensitive. An RF pulse is needed to produce a measurable transverse signal. Without RF, the magnetisation simply sits at equilibrium.',
+    see: ['larmor'] },
+  { id: 'fourier-transform', topic: 'Physics', q: ['Why is the Fourier transform used in MRI?', 'What is reconstruction?'],
+    tags: 'fourier transform reconstruction fft inverse image convert',
+    a: 'The raw signal is spatial frequency data, and a Fourier transform converts it into a spatial image. Fast Fourier transforms make reconstruction take milliseconds. Missing or undersampled k-space lines produce artefacts such as aliasing or blurring.',
+    see: ['kspace'] },
+  /* ---------- quench and cryogenics ---------- */
+  { id: 'quench', topic: 'Hardware', q: ['What is a quench?', 'Explain quench to a student'],
+    tags: 'quench superconducting lose helium vent heat energy field collapse',
+    a: 'A quench happens when part of the superconducting wire warms above its critical temperature or current. It becomes resistive, the stored magnetic energy turns into heat, the helium boils off, and the field decays. Quench pipes vent the gas outside the building.',
+    see: ['quench-safety'] },
+  /* ---------- this app ---------- */
+  { id: 'app-train', topic: 'App', q: ['How do I use Train mode?', 'What is Train mode for?'],
+    tags: 'train trainer mode scenario pads checkpoint score',
+    a: 'Train mode is the 3D suite. Touch pads T1–T5 attest each checkpoint, and T6 resets the attempt. The assessor checks each claim against what you actually did. Select objects to inspect them, classify equipment, and move items. Your score, violations and event log are kept for the trainer report.',
+    see: ['R-SEQ-01'] },
+  { id: 'app-learn', topic: 'App', q: ['How do I use Learn mode?', 'What is Inside the scanner?'],
+    tags: 'learn internals chapter scanner build explode cutaway',
+    a: 'Learn mode is a 3D cutaway of the scanner in 14 chapters. Build or explode the magnet and coils, fire RF pulses, acquire k-space, and see quench. Pad T1 and T2 move between chapters, T5 explodes or assembles, and the flick gesture also changes chapter.',
+    see: ['chapter-1'] },
+  { id: 'app-controller', topic: 'App', q: ['How do I connect the ESP32?', 'How does the controller work?'],
+    tags: 'esp32 controller usb serial connect pads tilt tap flick level',
+    a: 'Use Chrome or Edge opened from localhost, click Connect, choose the port, then Level the controller with the board flat and still. Pads send touch events and the MPU9250 sends tilt, tap, double-tap and flick. The keys 1–6 do the same job if no board is connected.',
+    see: [] },
+  { id: 'app-level', topic: 'App', q: ['Why do I need to level the controller?', 'Tilt drifts when I move the board'],
+    tags: 'level zero calibrate gyro bias drift tilt flat still',
+    a: 'Levelling defines the current pose as flat and measures the gyro bias. Without it the view drifts and tilt is offset. Keep the board flat and still for two seconds, then Level. This does not use the compass, so there is no heading drift.',
+    see: [] },
+  { id: 'app-wand', topic: 'App', q: ['What is the wand meter?', 'Why does the meter move when I bring a magnet near?'],
+    tags: 'wand meter magnetometer magnet field change dmag',
+    a: 'The wand meter shows how the magnetic field near the board changes since levelling, from the MPU9250 magnetometer. Bringing a magnet or steel close makes it move. It shows the principle of ferromagnetic detection, but it is a demonstration and not a screening device.',
+    see: ['ferromagnetic-detection'] },
+  { id: 'app-report', topic: 'App', q: ['How do I get my report?', 'Can I export the trainer report?'],
+    tags: 'report trainer dashboard export csv json download copy session',
+    a: 'Press T or Trainer view for the session report. It lists the score, the event log, the violations and the next recommended scenario. You can download or copy it as JSON or CSV, or copy the feedback log you saved from the assessor.',
+    see: ['R-SEQ-01'] },
+  { id: 'app-theme', topic: 'App', q: ['How do I change the theme?', 'Can I use light mode?'],
+    tags: 'theme light dark mode colour appearance',
+    a: 'Use the theme button in the header to switch between dark and light. Your choice is remembered in this browser and applies to all three modules.',
+    see: [] },
+  { id: 'app-offline', topic: 'App', q: ['Does the app need the internet?', 'Does it need an account or an API key?'],
+    tags: 'offline internet account key api cloud privacy local',
+    a: 'No. The simulator, the 3D views and this coach run locally with no account, key or internet connection. The optional local AI server only sends data to a model on your own machine, if you install one.',
+    see: [] },
+  { id: 'app-assessor', topic: 'App', q: ['What does the assessor do?', 'Why was I marked wrong?'],
+    tags: 'assessor violation rule feedback mistake evidence score penalty',
+    a: 'The assessor is rule-based. Each touch is a claim that is checked against the recorded actions: what you inspected, classified, moved, and confirmed. If a rule is broken, the card shows the evidence, why it matters, and the corrective step. It can be closed or saved to the feedback log without losing the attempt.',
+    see: ['R-SEQ-01'] },
+  { id: 'app-close-log', topic: 'App', q: ['How do I close or save feedback?', 'The assessor covers the buttons'],
+    tags: 'close dismiss hide log save feedback overlay cover button',
+    a: 'Use Hide on the assessor to collapse the feedback card so the procedure and inspector are visible again. Use Save to log to keep the message in the feedback log, which appears in the trainer report. Nothing is deleted from the event log.',
+    see: [] },
+  { id: 'app-keys', topic: 'App', q: ['What keyboard shortcuts are there?', 'Which keys control the trainer?'],
+    tags: 'keys keyboard shortcut 1 2 3 4 5 6 c l esc question mark help',
+    a: 'Keys 1–6 press the pads, C resets the camera, L toggles labels, Esc deselects, T opens the trainer report, and ? opens help. In Learn, the arrow keys change chapter.',
+    see: [] },
+  /* ---------- procedure ---------- */
+  { id: 'procedure-order', topic: 'Procedure', q: ['What is the order of the pre-scan procedure?', 'What steps come first?'],
+    tags: 'order procedure steps sequence checkpoint screening equipment access clearance scan',
+    a: 'The order is: screening sign-off (identity and form), equipment verification (every item classified and out of Zone IV), Zone IV access (final patient check at the door), final safety clearance, then proceed to scan. Each step depends on the earlier ones.',
+    see: ['R-SEQ-01', 'R-SEQ-02', 'R-SCAN-01'] },
+  { id: 'why-sequence', topic: 'Procedure', q: ['Why must the steps happen in order?', 'Why not do the final check first?'],
+    tags: 'sequence order why prerequisite dependency',
+    a: 'Each step relies on the checks before it. Equipment clearance is meaningless if a patient is not screened, and a final door check only protects the patient if everything earlier is complete. Out-of-order steps are recorded as violations.',
+    see: ['R-SEQ-01'] },
+  { id: 'retries', topic: 'Procedure', q: ['What happens when I reset an attempt?', 'Do retries count?'],
+    tags: 'reset retry attempt score new start',
+    a: 'Resetting closes the attempt and counts as a retry. Changing scenario from the header is not a retry. The score and violations of the closed attempt stay in the report.',
+    see: [] },
+  { id: 'scoring', topic: 'Procedure', q: ['How is the score calculated?', 'What is the pass rule?'],
+    tags: 'score pass mark points penalty critical major minor',
+    a: 'Scores start at 100 and lose points for each violation, more for critical ones. A pass needs at least the pass mark and no critical violations. The same violation counts once per subject, so repeated mistakes on one item are not penalised twice.',
+    see: [] },
+  { id: 'adaptive', topic: 'Procedure', q: ['How does the next scenario get chosen?', 'What is adaptive practice?'],
+    tags: 'adaptive recommendation level drill guided practice next scenario',
+    a: 'After an attempt the trainer recommends the next scenario from the errors you made. A critical equipment error leads to the equipment drill. Two failures lead to guided practice. A pass unlocks the next level.',
+    see: [] },
+  /* ---------- general MR facts ---------- */
+  { id: 'mri-vs-xray', topic: 'Imaging', q: ['How is MRI different from CT or X-ray?', 'Does MRI use radiation?'],
+    tags: 'ionising radiation xray ct difference mri no radiation',
+    a: 'MRI uses a strong static field and radio waves rather than ionising radiation. It shows soft tissue contrast well, but the magnet is always on, so the environmental hazards are different from X-ray and CT. Screening for metal and devices is the main safety task.',
+    see: ['R-EQ-03'] },
+  { id: 'why-mri-noise-and-time', topic: 'Imaging', q: ['Why does an MRI take so long?', 'How long is a typical MRI scan?'],
+    tags: 'time duration long scan minutes speed fast sequence',
+    a: 'Each image needs many excitations, one per line of k-space, and the spins must recover between excitations. A typical scan takes 10 to 60 minutes. Faster sequences trade off signal, contrast or resolution.',
+    see: ['kspace'] },
+  { id: 'what-is-mri', topic: 'Imaging', q: ['What is MRI?', 'Explain how MRI works simply.'],
+    tags: 'mri magnetic resonance imaging how works overview basics',
+    a: 'MRI uses a strong magnetic field to align hydrogen protons in the body. Radio waves at the Larmor frequency tip those protons, and as they relax they emit signals. Gradients encode where each signal came from, and a Fourier transform turns the data into an image of tissue contrast.',
+    see: ['larmor', 'kspace'] },
+  { id: 'magnet-strength-units', topic: 'Physics', q: ['What is a tesla?', 'How do tesla and gauss relate?'],
+    tags: 'tesla gauss unit mt millitesla conversion',
+    a: '1 tesla equals 10 000 gauss, and 1 millitesla equals 10 gauss. Earth\'s magnetic field is about 0.5 gauss (0.05 mT). MRI magnets range from about 0.2 T to 7 T for clinical or research use.',
+    see: ['field-strength'] },
+  { id: 'gradient-slew', topic: 'Hardware', q: ['What is slew rate?', 'Why does the gradient slew rate matter?'],
+    tags: 'slew rate gradient switching nerve stimulation limit conditional',
+    a: 'Slew rate is how fast the gradient amplitude changes, in T/m per second. Fast slewing causes nerve stimulation and more noise, so scanners limit it. Some MR Conditional implants state a maximum slew rate in their labelling.',
+    see: ['R-EQ-04'] },
+  { id: 'mr-conditional-conditions', topic: 'Equipment', q: ['What conditions count for MR Conditional?', 'What do I check on an MR Conditional label?'],
+    tags: 'conditions label field strength gauss slew sar limits check',
+    a: 'Check the maximum static field strength, the spatial field gradient, the maximum slew rate and the SAR or scan time limits in the labelling. The conditions must be met on this scanner, and they must be confirmed before the item enters Zone IV.',
+    see: ['R-EQ-04'] },
+  { id: 'oxygen-cylinder', topic: 'Equipment', q: ['Can I take oxygen into the scan room?', 'Why is an oxygen cylinder a problem?'],
+    tags: 'oxygen cylinder gas medical equipment trolley steel mr unsafe',
+    a: 'Standard steel oxygen cylinders are MR Unsafe and must be kept out of Zone IV. Use MR Conditional or MR Safe cylinder systems and check their labelling. Oxygen can be supplied through an MR Conditional system if the scanner area is designed for it.',
+    see: ['R-EQ-03'] },
+  { id: 'ecg-monitor', topic: 'Equipment', q: ['Can patient monitors go into the scanner?', 'Which monitors are MR safe?'],
+    tags: 'monitor ecg pulse oximeter mr conditional leads electrodes',
+    a: 'Only monitors and electrodes that are labelled MR Conditional should enter Zone IV. Standard monitors with metal parts and cables are unsafe, and the cables can cause burns. Use the MR-labelled equipment and check the conditions on each label.',
+    see: ['R-EQ-04'] },
+  { id: 'wheelchair-trolley', topic: 'Equipment', q: ['Can a wheelchair go into Zone IV?', 'Which trolleys are allowed?'],
+    tags: 'wheelchair trolley gurney stretcher bed mr safe steel',
+    a: 'Standard wheelchairs, trolleys and gurneys are usually steel and are MR Unsafe. Use MR Conditional or MR Safe transfer equipment. Staging areas must be checked so these items do not drift toward Zone IV.',
+    see: ['R-EQ-03', 'R-EQ-06'] },
+  { id: 'cleaning-equipment', topic: 'Equipment', q: ['Can a floor buffer be used in Zone IV?', 'What about cleaning equipment?'],
+    tags: 'cleaning buffer vacuum mop equipment metal electric motor',
+    a: 'Electric floor buffers and vacuums usually contain steel and motors, so treat them as MR Unsafe unless labelled otherwise. Use them only in areas that are cleared, and never leave them in Zone IV.',
+    see: ['R-EQ-03'] },
+  { id: 'why-classify', topic: 'Equipment', q: ['Why do I need to classify each item?', 'What does classification achieve?'],
+    tags: 'classify classification label record evidence',
+    a: 'Classification turns a visual check into a recorded decision based on labelling. It creates the evidence the assessor uses to decide whether an item can be moved or left in Zone IV. Always read the label and record what it says.',
+    see: ['R-EQ-01', 'R-EQ-02'] },
+  { id: 'move-items', topic: 'Equipment', q: ['Where should an MR Unsafe item go?', 'What do I do with an unsafe item in Zone IV?'],
+    tags: 'move remove staging zone ii store out',
+    a: 'Move an MR Unsafe item back to the Zone II staging area, outside Zone IV, and keep it there until it is removed from the department. Record the move, because the trainer report counts it as evidence.',
+    see: ['R-EQ-03'] },
+  { id: 'implant-patient-card', topic: 'Screening', q: ['What does the patient implant card show?', 'What is a device implant card?'],
+    tags: 'card implant device record manufacturer model conditions',
+    a: 'An implant card records the device manufacturer, model and sometimes the MR labelling conditions. It is useful evidence, but it must be checked against the labelling and reviewed by the MR safety officer or radiologist. The card alone does not clear the patient.',
+    see: ['R-SCR-02'] },
+  { id: 'magnet-room-entry', topic: 'Access', q: ['Who can enter Zone IV?', 'Can family enter the scan room?'],
+    tags: 'enter access zone iv staff family visitor escort screened',
+    a: 'Only screened patients and trained staff may enter Zone IV. Family members may accompany a patient only if they are screened and the site policy allows it, and they must not bring metal into the room.',
+    see: ['R-SEQ-02'] },
+  { id: 'pads-attest', topic: 'App', q: ['What does touching a pad mean?', 'Why does a touch not always count?'],
+    tags: 'pad touch attest claim accepted completes checkpoint',
+    a: 'A pad touch is a claim. The engine accepts it only if the requirements for that checkpoint are met. A touch can be received but not accepted, for example if the patient record was never opened. The event log shows received, accepted, completed and violation separately.',
+    see: ['R-SEQ-01'] },
+  { id: 'data-privacy', topic: 'App', q: ['Is patient data stored?', 'Are the patients real?'],
+    tags: 'data privacy patient real fictional stored record',
+    a: 'All patient cases in the trainer are fictional. Nothing is sent to a server unless you turn on the optional local AI server, and that only talks to a model on your own machine or to the provider you configure.',
+    see: [] },
+  { id: 'calibration', topic: 'Hardware', q: ['Why does the touch pad need calibration?', 'The pads trigger by themselves'],
+    tags: 'calibrate calibration pad noise threshold sensitive recal',
+    a: 'Each pad\'s resting reading depends on its tape, wire length and humidity. Calibration measures that baseline, and the threshold is set above the noise. If the pads trigger by themselves, press Recal on the controller panel with your hands off the pads.',
+    see: [] },
+  { id: 'touch-debounce', topic: 'Hardware', q: ['Why does one touch sometimes count twice?', 'Debounce and touch bounce'],
+    tags: 'debounce bounce double count touch repeat filter',
+    a: 'Contact bounce can look like two touches. The firmware uses a debounce window and hysteresis, and the browser drops duplicate sequence numbers, so one physical touch produces one event.',
+    see: [] },
+  { id: 'mpu9250', topic: 'Hardware', q: ['What is the MPU9250?', 'Does my board have a magnetometer?'],
+    tags: 'mpu9250 mpu6500 imu accelerometer gyro magnetometer ak8963 chip',
+    a: 'The MPU9250 combines an accelerometer, a gyroscope and a magnetometer (AK8963). Many cheap boards are actually MPU6500, which has no magnetometer. The Home screen and the hello message report which chip is fitted, and the wand meter is disabled without one.',
+    see: [] },
+  { id: 'gesture-tap-flick', topic: 'Hardware', q: ['How do tap and flick work?', 'Why does a gesture trigger by accident?'],
+    tags: 'tap double tap flick gesture threshold accelerometer gyro refractory',
+    a: 'A tap is a sharp acceleration spike while the board is nearly still. A flick is a fast rotation about the roll axis. Double tap needs two taps within a short window. If gestures fire by accident, adjust the thresholds in Motion.h.',
+    see: [] },
+];
+
+</script>
+<script>
+/* MRISafe Twin coach: answers from knowledge-base.js on this computer.
+ * No account, API key, server or internet is needed. It is the default coach, and the
+ * fallback when an optional local AI server (for example Ollama) is unavailable.
+ *
+ * Matching is keyword retrieval: question words are stemmed, weighted by where they match
+ * (sample questions > tags > topic > answer text) and scored with inverse document
+ * frequency. A reply is given only when the match is confident; otherwise the coach says so
+ * and suggests questions it can answer. Explanations of broken rules are built from the
+ * rule card the assessor sends, never from free text. */
+(function () {
+  const KB = Array.isArray(window.MRIKB) ? window.MRIKB : [];
+
+  const STOP = new Set(('a an the is are was were be to of in on for and or it its this that what how why when do does did ' +
+    'i my me you your can with as at by from if so not no about explain tell please which there their they we should would ' +
+    'could get use mean means simply just').split(' '));
+  const SYN = {
+    magnets: 'magnet', magnetic: 'magnet', tesla: 'field', detector: 'detect', detection: 'detect', detects: 'detect',
+    metal: 'ferromagnetic', steel: 'ferromagnetic', implants: 'implant', device: 'implant', pacemakers: 'pacemaker',
+    screened: 'screening', screen: 'screening', scanner: 'scan', scans: 'scan', scanning: 'scan', quenches: 'quench',
+    loud: 'noise', noisy: 'noise', hot: 'heat', heating: 'heat', burns: 'burn', labels: 'label', labelling: 'label',
+    labelled: 'label', classify: 'classification', classified: 'classification', pads: 'pad',
+    chapters: 'chapter', zones: 'zone', rooms: 'room',
+  };
+
+  function stem(w) {
+    w = SYN[w] || w;
+    return w.length > 4 ? w.replace(/(ings|ing|ed|es|s)$/, '') : w;
+  }
+  function tokens(s) {
+    return String(s || '').toLowerCase().replace(/k-space/g, 'kspace').replace(/[^a-z0-9\s-]+/g, ' ').split(/[\s]+/)
+      .map(w => w.replace(/^-+|-+$/g, ''))
+      .filter(w => w.length > 1 && !STOP.has(w))
+      .map(stem);
+  }
+
+  // Index: one token set per field, and document frequency for weighting.
+  const WEIGHTS = { q: 3, tags: 2, topic: 1, a: 1 };
+  const docs = KB.map(e => ({
+    e,
+    f: {
+      q: new Set(tokens((e.q || []).join(' '))),
+      tags: new Set(tokens(e.tags)),
+      topic: new Set(tokens(e.topic)),
+      a: new Set(tokens(e.a)),
+    },
+  }));
+  const df = new Map();
+  for (const d of docs) {
+    const all = new Set([...d.f.q, ...d.f.tags, ...d.f.topic, ...d.f.a]);
+    for (const t of all) df.set(t, (df.get(t) || 0) + 1);
+  }
+  const N = Math.max(1, docs.length);
+  const idf = t => Math.log(1 + N / (df.get(t) || 1));
+
+  function score(qTokens, d) {
+    let s = 0;
+    for (const t of new Set(qTokens)) {
+      let best = 0;
+      for (const field of Object.keys(WEIGHTS)) if (d.f[field].has(t)) best = Math.max(best, WEIGHTS[field]);
+      if (best) s += best * idf(t);
+    }
+    return s;
+  }
+  const CONFIDENT = 4; // below this the coach admits it does not know
+
+  function search(question, n = 3) {
+    const q = tokens(question);
+    if (!q.length) return [];
+    return docs.map(d => ({ e: d.e, s: score(q, d) }))
+      .filter(x => x.s > 0)
+      .sort((a, b) => b.s - a.s)
+      .slice(0, n);
+  }
+
+  const SUGGEST = ['What does MR Conditional mean?', 'Why is the magnetic field always on?', 'What is k-space?',
+    'What is a quench?', 'How does slice selection work?', 'Why do I need to classify each item?'];
+
+  function explain(ctx) {
+    const vs = (ctx && ctx.violations) || [];
+    if (!vs.length) return 'No mistake is recorded yet in this attempt. When the assessor flags one, ask me again.';
+    return vs.map(v => {
+      const hits = search(`${v.title} ${v.evidence || ''}`, 6);
+      const bg = (hits.find(h => (h.e.see || []).includes(v.rule)) || { e: KB.find(e => (e.see || []).includes(v.rule)) }).e;
+      let t = `[${v.rule}] ${v.title}\n\nWhat happened: ${v.evidence}\n\nWhy it matters: ${v.why}\n\nNext: ${v.corrective}`;
+      if (bg) t += `\n\nBackground: ${bg.a}`;
+      return t;
+    }).join('\n\n— — —\n\n');
+  }
+
+  function debrief(ctx) {
+    if (!ctx) return 'Finish or reset an attempt first, then ask for a debrief.';
+    const lines = [
+      `Result: ${ctx.scenario}, attempt ${ctx.attempt}: score ${ctx.score}${ctx.completed ? (ctx.passed ? ', passed.' : ', not passed.') : ' (in progress).'}`,
+      `Actions: ${ctx.correctActions} correct, ${ctx.actionsWithViolation} with a violation; ${ctx.criticalCount} critical.`,
+      ctx.violations && ctx.violations.length ? `Mistakes: ${ctx.violations.map(v => `[${v.rule}] ${v.title}`).join('; ')}.` : 'Mistakes: none recorded.',
+      ctx.recommendation ? `Next: ${ctx.recommendation.next} (${ctx.recommendation.rule}). ${ctx.recommendation.reason}` : 'Next: finish the attempt to get a recommendation.',
+    ];
+    const tip = ctx.violations && ctx.violations.length
+      ? `\n\nFor the first mistake, the rule to remember is [${ctx.violations[0].rule}]: ${ctx.violations[0].corrective}`
+      : '';
+    return lines.join('\n') + tip;
+  }
+
+  let quizIndex = 0;
+  const QUIZ_POOL = KB.filter(e => e.q && e.q.length && e.topic !== 'App' && e.topic !== 'Procedure');
+  function quiz() {
+    if (!QUIZ_POOL.length) return 'The quiz has no questions yet.';
+    const e = QUIZ_POOL[quizIndex % QUIZ_POOL.length];
+    quizIndex += 7; // a stride through the pool so repeats are rare
+    return `Question: ${e.q[0]}\n\nAnswer to check yourself against: ${e.a}\n\nAsk "quiz me" again for another question.`;
+  }
+
+  function tutor(question, ctx) {
+    const notes = ctx && ctx.notes ? ctx.notes.slice(0, 900) : '';
+    if (notes && /chapter|simpl|this (part|section|page)/i.test(question || '')) {
+      return `From ${ctx.chapter}:\n\n${notes}`;
+    }
+    const hits = search(question || '', 3);
+    if (hits.length && hits[0].s >= CONFIDENT) {
+      const more = hits.slice(1).filter(h => h.s >= CONFIDENT - 1).map(h => h.e.q[0]);
+      return hits[0].e.a + (more.length ? `\n\nRelated: ${more.join(' · ')}` : '');
+    }
+    let t = "I don't have a confident answer to that in the built-in knowledge base yet.";
+    if (notes) t += `\n\nHere are the notes for ${ctx.chapter}:\n\n${notes}`;
+    t += `\n\nTry asking: ${SUGGEST.slice(0, 4).join(' · ')}`;
+    return t;
+  }
+
+  /* Public API. respond() returns plain text; the shell labels it "Knowledge base · offline". */
+  function respond(task, ctx, question) {
+    if (task === 'explain') return explain(ctx);
+    if (task === 'debrief') return debrief(ctx);
+    if (task === 'quiz') return quiz();
+    return tutor(question, ctx);
+  }
+
+  window.MRICoach = { respond, search, count: KB.length, confident: CONFIDENT, tokens };
+})();
+
+</script>
+<script>
+/* MRISafe Twin hand gestures: pure logic, no camera and no MediaPipe needed (so it is testable).
+ *
+ * Input: 21 MediaPipe hand landmarks per frame (normalised 0..1 image coordinates, camera not mirrored).
+ * Output: events for the shell to forward to the active module.
+ *
+ *   pos     index fingertip position on screen (0..1, mirrored, smoothed)
+ *   tap     quick pinch (thumb to index) released without moving: select / chapter action
+ *   drag    pinch held and moved: screen-normalised deltas, used to orbit the view
+ *   reset   open palm held still for about a second: reset the camera
+ *   lost    no hand in view
+ *   zoomOn / zoom{dz} / zoomOff   both palms open and held apart or together: dz is the
+ *           change in log(distance), so positive means zoom in. Only from TwoPalmZoom.
+ *
+ * Two hands: the hand the user labels RIGHT aims, taps and orbits (HandGestures); while both
+ * palms are open the zoom takes over and the aim hand's taps, drags and palm resets are paused.
+ */
+(function (root) {
+  const WRIST = 0, MIDDLE_MCP = 9, THUMB_TIP = 4, INDEX_TIP = 8;
+  const TIP = { index: 8, middle: 12, ring: 16, pinky: 20 };
+  const PIP = { index: 6, middle: 10, ring: 14, pinky: 18 };
+
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0));
+  const handScale = lm => dist(lm[WRIST], lm[MIDDLE_MCP]) || 1e-6;
+
+  // A finger is extended when its tip is clearly further from the wrist than its middle joint.
+  function fingerExtended(lm, name) {
+    return dist(lm[WRIST], lm[TIP[name]]) > dist(lm[WRIST], lm[PIP[name]]) * 1.15;
+  }
+  // Thumb-to-index distance relative to hand size: small when pinching.
+  function pinchRatio(lm) { return dist(lm[THUMB_TIP], lm[INDEX_TIP]) / handScale(lm); }
+  function isOpenPalm(lm) { return ['index', 'middle', 'ring', 'pinky'].every(n => fingerExtended(lm, n)); }
+
+  // Camera to screen: mirror horizontally (the preview looks like a mirror), and stretch the
+  // central 80% of the camera frame to the whole screen so small hand movements reach the edges.
+  function toScreen(xRaw, yRaw) {
+    return { x: clamp((1 - xRaw - 0.1) / 0.8, 0, 1), y: clamp((yRaw - 0.1) / 0.8, 0, 1) };
+  }
+
+  class HandGestures {
+    constructor(opts = {}) {
+      this.o = Object.assign({
+        pinchOn: 0.32, pinchOff: 0.42,   // hysteresis: pinch starts below 0.32, ends above 0.42
+        tapMaxMs: 450,                   // a quicker pinch with no drag is a tap
+        dragMin: 0.025,                  // screen fraction the pinch must travel before it is a drag
+        palmHoldMs: 1000, palmCooldownMs: 2500,
+        smooth: 0.45,                    // pointer smoothing (0 = frozen, 1 = raw)
+      }, opts);
+      this.reset();
+    }
+    reset() {
+      this.pos = null; this.pinched = false; this.pinchT0 = 0; this.anchor = null;
+      this.last = null; this.dragging = false; this.palmSince = null;
+      if (this.palmFired === undefined) this.palmFired = -Infinity;
+    }
+    update(lm, now, opts = {}) {
+      if (!lm || lm.length < 21) {
+        this.reset();
+        return [{ type: 'lost' }];
+      }
+      const events = [];
+      const p = toScreen(lm[INDEX_TIP].x, lm[INDEX_TIP].y);
+      const s = this.o.smooth;
+      this.pos = this.pos ? { x: this.pos.x + (p.x - this.pos.x) * s, y: this.pos.y + (p.y - this.pos.y) * s } : p;
+      events.push({ type: 'pos', x: this.pos.x, y: this.pos.y });
+      if (opts.quiet) { // zooming with both palms: keep the pointer, pause taps, drags and resets
+        this.pinched = false; this.dragging = false; this.palmSince = null;
+        return events;
+      }
+
+      const r = pinchRatio(lm);
+      if (!this.pinched && r < this.o.pinchOn) {
+        this.pinched = true; this.pinchT0 = now; this.dragging = false;
+        this.anchor = { ...this.pos }; this.last = { ...this.pos };
+      } else if (this.pinched && r > this.o.pinchOff) {
+        if (!this.dragging && now - this.pinchT0 <= this.o.tapMaxMs) events.push({ type: 'tap' });
+        this.pinched = false; this.dragging = false;
+      }
+      if (this.pinched) {
+        const moved = Math.hypot(this.pos.x - this.anchor.x, this.pos.y - this.anchor.y);
+        if (!this.dragging && moved > this.o.dragMin) this.dragging = true;
+        if (this.dragging) {
+          events.push({ type: 'drag', dx: this.pos.x - this.last.x, dy: this.pos.y - this.last.y });
+        }
+        this.last = { ...this.pos };
+      }
+
+      if (isOpenPalm(lm) && !this.pinched) {
+        if (this.palmSince === null) this.palmSince = now;
+        if (now - this.palmSince >= this.o.palmHoldMs && now - this.palmFired >= this.o.palmCooldownMs) {
+          this.palmFired = now; this.palmSince = null;
+          events.push({ type: 'reset' });
+        }
+      } else {
+        this.palmSince = null;
+      }
+      return events;
+    }
+  }
+
+  // Palm centre: midway between the wrist and the base of the middle finger.
+  function palmCentre(lm) {
+    return { x: (lm[WRIST].x + lm[MIDDLE_MCP].x) / 2, y: (lm[WRIST].y + lm[MIDDLE_MCP].y) / 2 };
+  }
+  // Distance between two palm centres, in a frame that is 4:3 (640x480 camera), so x and y count alike.
+  const CAM_ASPECT = 4 / 3;
+  function palmGap(a, b) {
+    const p = palmCentre(a), q = palmCentre(b);
+    return Math.hypot((p.x - q.x) * CAM_ASPECT, p.y - q.y);
+  }
+
+  // Zoom from two open palms. Starts after both palms have been open and apart-or-together for
+  // engageMs (so a passing hand does nothing), stops once either palm has been gone for releaseMs.
+  class TwoPalmZoom {
+    constructor(opts = {}) {
+      this.o = Object.assign({ engageMs: 250, releaseMs: 200, deadzone: 0.006, smooth: 0.5 }, opts);
+      this.reset();
+    }
+    reset() { this.gap = null; this.last = null; this.engaged = false; this.startedAt = null; this.offSince = null; }
+    update(a, b, now) {
+      const both = !!(a && b && isOpenPalm(a) && isOpenPalm(b));
+      const events = [];
+      if (!both) {
+        if (this.engaged) {
+          if (this.offSince === null) this.offSince = now;
+          if (now - this.offSince >= this.o.releaseMs) { this.reset(); events.push({ type: 'zoomOff' }); }
+        } else { this.gap = null; this.startedAt = null; }
+        return events;
+      }
+      this.offSince = null;
+      const g = Math.max(palmGap(a, b), 1e-4);
+      this.gap = this.gap === null ? g : this.gap + (g - this.gap) * this.o.smooth;
+      if (!this.engaged) {
+        if (this.startedAt === null) this.startedAt = now;
+        if (now - this.startedAt >= this.o.engageMs) {
+          this.engaged = true; this.last = this.gap; events.push({ type: 'zoomOn' });
+        }
+        return events;
+      }
+      const dz = Math.log(this.gap / this.last);
+      if (Math.abs(dz) >= this.o.deadzone) { events.push({ type: 'zoom', dz }); this.last = this.gap; }
+      return events;
+    }
+  }
+
+  // Which detected hand aims. labelIsUserRight(label) says whether a MediaPipe label is the
+  // user's right hand (it depends on whether the camera frame was flipped). With no usable
+  // labels, the first hand aims and the second is the zoom palm.
+  function pickHands(hands, userRightLabel) {
+    const list = hands.filter(h => h && h.lm && h.lm.length >= 21);
+    if (!list.length) return { aim: null, other: null };
+    if (list.length === 1) return { aim: list[0], other: null };
+    let aim = list.find(h => h.label === userRightLabel) || null;
+    if (!aim) return { aim: list[0], other: list[1] };
+    return { aim, other: list.find(h => h !== aim) || null };
+  }
+
+  const api = { HandGestures, TwoPalmZoom, pickHands, palmGap, palmCentre, toScreen, pinchRatio, isOpenPalm, fingerExtended };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  root.MRIHandLogic = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
+/* MRISafe Twin hand control: webcam + MediaPipe Hand Landmarker, run entirely in this browser.
+ * Frames never leave the computer. Start only on a user click (the browser asks for camera access).
+ *
+ *   MRIHands.start({ onEvent, onStatus, preview })   → Promise (rejects with a readable message)
+ *   MRIHands.stop()
+ *   MRIHands.setSwapHands(bool)   flip which detected hand is treated as the user's right hand
+ *
+ * Two hands: the right hand aims, taps and orbits; both open palms zoom (see hand-logic.js).
+ *
+ * Model: simulator/models/hand_landmarker.task (see vendor/mediapipe/README.md). Library: vendored
+ * under vendor/mediapipe, with the pinned jsDelivr copy as a fallback.
+ */
+(function () {
+  const VERSION = '0.10.14';
+  const LIB_LOCAL = './vendor/mediapipe/vision_bundle.mjs';
+  const LIB_CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${VERSION}/vision_bundle.mjs`;
+  const WASM_LOCAL = './vendor/mediapipe/wasm';
+  const WASM_CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${VERSION}/wasm`;
+  const MODEL_LOCAL = './models/hand_landmarker.task';
+  const MODEL_CDN = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+  const LOST_AFTER_MS = 400;
+  // MediaPipe labels hands as if the image were a mirror. We pass the camera frame unflipped, so the
+  // user's right hand is labelled "Left". The "Swap hands" button in the shell flips this if needed.
+  const USER_RIGHT_LABEL_UNFLIPPED = 'Left';
+
+  const S = { running: false, stream: null, video: null, canvas: null, ctx: null, lm: null, lib: null,
+    landmarker: null, gestures: null, zoom: null, onEvent: null, onStatus: null, raf: 0, lastT: -1, seenAt: 0,
+    hadHand: false, swapHands: false, status: 'off' };
+  const userRightLabel = () => (S.swapHands ? 'Right' : USER_RIGHT_LABEL_UNFLIPPED);
+
+  function status(state, detail) { S.status = state; if (S.onStatus) S.onStatus(state, detail || ''); }
+
+  async function importLibrary() {
+    let lastErr = null;
+    for (const url of [LIB_LOCAL, LIB_CDN]) {
+      try { return { lib: await import(url), wasm: url === LIB_LOCAL ? WASM_LOCAL : WASM_CDN }; }
+      catch (e) { lastErr = e; }
+    }
+    throw new Error('The hand-tracking library could not be loaded (' + (lastErr && lastErr.message) + ').');
+  }
+
+  async function loadLandmarker() {
+    if (S.landmarker) return;
+    status('loading', 'Loading the hand model');
+    const { lib, wasm } = await importLibrary();
+    const vision = await lib.FilesetResolver.forVisionTasks(wasm);
+    let lastErr = null;
+    for (const model of [MODEL_LOCAL, MODEL_CDN]) {
+      for (const delegate of ['GPU', 'CPU']) {
+        try {
+          S.landmarker = await lib.HandLandmarker.createFromOptions(vision, {
+            baseOptions: { modelAssetPath: model, delegate },
+            runningMode: 'VIDEO', numHands: 2,
+            minHandDetectionConfidence: 0.5, minHandPresenceConfidence: 0.5, minTrackingConfidence: 0.5,
+          });
+          return;
+        } catch (e) { lastErr = e; }
+      }
+    }
+    throw new Error('The hand model is missing. Save hand_landmarker.task into simulator/models/ (see vendor/mediapipe/README.md), or connect to the internet once.' + (lastErr ? ' ' + lastErr.message : ''));
+  }
+
+  async function start(opts) {
+    if (S.running) return;
+    S.onEvent = opts.onEvent; S.onStatus = opts.onStatus;
+    if (!window.isSecureContext) throw new Error('The camera needs this page to be opened from localhost or https.');
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('This browser cannot use the camera. Use Chrome or Edge.');
+    if (!window.MRIHandLogic) throw new Error('Hand logic did not load.');
+    status('camera', 'Waiting for camera access');
+    S.stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' }, audio: false });
+    S.video = document.createElement('video');
+    S.video.playsInline = true; S.video.muted = true; S.video.srcObject = S.stream;
+    await S.video.play();
+    S.canvas = opts.preview || null;
+    S.ctx = S.canvas ? S.canvas.getContext('2d') : null;
+    S.gestures = new MRIHandLogic.HandGestures();
+    S.zoom = new MRIHandLogic.TwoPalmZoom();
+    S.running = true;
+    try { await loadLandmarker(); }
+    catch (e) { stop(); throw e; }
+    S.lastT = -1; S.seenAt = 0; S.lostSent = true;
+    status('tracking', 'Show one hand to the camera, or both palms to zoom');
+    S.raf = requestAnimationFrame(frame);
+  }
+
+  function stop() {
+    S.running = false;
+    cancelAnimationFrame(S.raf);
+    if (S.stream) S.stream.getTracks().forEach(t => t.stop());
+    S.stream = null; S.video = null; S.hadHand = false;
+    if (S.zoom) S.zoom.reset();
+    if (S.ctx && S.canvas) S.ctx.clearRect(0, 0, S.canvas.width, S.canvas.height);
+    status('off', '');
+  }
+
+  function drawPreview(hands) {
+    if (!S.ctx) return;
+    const c = S.canvas, x = S.ctx, w = c.width, h = c.height;
+    x.save();
+    x.translate(w, 0); x.scale(-1, 1); // mirror, like the screen the user sees
+    x.drawImage(S.video, 0, 0, w, h);
+    x.restore();
+    x.fillStyle = '#45d6ec';
+    for (const hand of hands) for (const p of hand.lm) { x.beginPath(); x.arc((1 - p.x) * w, p.y * h, 2.4, 0, Math.PI * 2); x.fill(); }
+  }
+
+  function frame() {
+    if (!S.running) return;
+    S.raf = requestAnimationFrame(frame);
+    const v = S.video;
+    if (!v || v.readyState < 2 || !S.landmarker) return;
+    if (v.currentTime === S.lastT) return; // one detection per new camera frame
+    S.lastT = v.currentTime;
+    const now = performance.now();
+    let res = null;
+    try { res = S.landmarker.detectForVideo(v, now); } catch (e) { return; }
+    const detected = (res && res.landmarks ? res.landmarks : []).map((lm, i) => {
+      const cat = res.handedness && res.handedness[i] && res.handedness[i][0];
+      return { lm, label: cat ? cat.categoryName : '' };
+    });
+    const { aim, other } = MRIHandLogic.pickHands(detected, userRightLabel());
+    const aimLm = aim ? aim.lm : null;
+    drawPreview(detected);
+
+    const zoomEvents = S.zoom.update(aimLm, other ? other.lm : null, now);
+    let events = zoomEvents.slice();
+    if (aimLm) { S.seenAt = now; S.lostSent = false; events = events.concat(S.gestures.update(aimLm, now, { quiet: S.zoom.engaged })); }
+    else if (!S.lostSent && now - S.seenAt > LOST_AFTER_MS) { // brief blinks in detection are ignored
+      S.lostSent = true; events = events.concat(S.gestures.update(null, now));
+    }
+    for (const e of events) {
+      if (e.type === 'zoomOn') status('zoom', 'Zoom on: move your palms apart to zoom in, together to zoom out');
+      if (e.type === 'zoomOff') status(aimLm ? 'hand' : 'tracking', aimLm ? 'Hand found' : 'Show one hand to the camera, or both palms to zoom');
+      if (S.onEvent) S.onEvent(e);
+    }
+    if (aimLm && !S.hadHand) { S.hadHand = true; status('hand', 'Hand found'); }
+    if (!aimLm && S.hadHand && now - S.seenAt > LOST_AFTER_MS) { S.hadHand = false; status('tracking', 'Show one hand to the camera, or both palms to zoom'); }
+  }
+
+  window.MRIHands = {
+    start, stop,
+    setSwapHands(on) { S.swapHands = !!on; },
+    get status() { return S.status; },
+    get running() { return S.running; },
+  };
+})();
+
+</script>
+<script>
+(() => {
+'use strict';
+const E = window.MRIEngine, C = window.MRIController, gsap = window.gsap;
+const RM = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const D = s => (RM ? 0 : s);
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+const state = { mode: 'home', imuMode: 'orbit', drawer: false, ai: { checked: false, configured: false, provider: '', model: '', server: false },
+  chapter: null, violation: null, debrief: null, history: [], busy: false };
+
+/* =====================================================================
+ * MODES (Home / Train / Learn) — each module runs in its own same-origin frame
+ * =================================================================== */
+const frames = {};
+const stage = $('#stage');
+function frameFor(mode) {
+  if (frames[mode]) return frames[mode];
+  const f = document.createElement('iframe');
+  f.title = mode === 'train' ? 'Safety trainer' : 'Inside the scanner';
+  f.src = (mode === 'train' ? './trainer.html' : './internals.html') + '?embed=1';
+  f.allow = 'serial; clipboard-write';
+  f.hidden = true;
+  stage.appendChild(f);
+  frames[mode] = { el: f, ready: false };
+  return frames[mode];
+}
+function postTo(mode, kind, data = {}) {
+  const fr = frames[mode];
+  if (fr && fr.el.contentWindow) fr.el.contentWindow.postMessage({ mrisafe: 1, kind, ...data }, location.origin);
+}
+function setMode(mode) {
+  if (mode === state.mode) return;
+  state.mode = mode;
+  document.querySelectorAll('nav.modes button').forEach(b => { if (b.dataset.mode === mode) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
+  $('#home').hidden = mode !== 'home';
+  for (const m of ['train', 'learn']) {
+    if (m === mode) { const fr = frameFor(m); fr.el.hidden = false; postTo(m, 'visible', { visible: true }); setTimeout(() => fr.el.contentWindow && fr.el.focus(), 50); }
+    else if (frames[m]) { frames[m].el.hidden = true; postTo(m, 'visible', { visible: false }); }
+  }
+  if (mode === 'home') gsap.fromTo('#home .home-inner > *', { y: 10, opacity: 0 }, { y: 0, opacity: 1, duration: D(0.4), stagger: D(0.05), clearProps: 'all' });
+  renderPadTables(); renderQuick(); renderDrawerTitle();
+  if (mode !== 'train') postTo('train', 'hand-pos', { visible: false }); // no cursor left behind in a hidden trainer
+  try { history.replaceState(null, '', mode === 'home' ? location.pathname : '#' + mode); } catch (e) {}
+}
+document.querySelectorAll('nav.modes button').forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
+document.querySelectorAll('[data-go]').forEach(b => b.addEventListener('click', () => setMode(b.dataset.go)));
+$('#brand').addEventListener('click', () => setMode('home'));
+
+/* messages from the module frames */
+window.addEventListener('message', e => {
+  if (e.origin !== location.origin || !e.data || e.data.mrisafe !== 1) return;
+  const d = e.data;
+  const from = Object.keys(frames).find(k => frames[k].el.contentWindow === e.source);
+  switch (d.kind) {
+    case 'ready':
+      if (from) { frames[from].ready = true; postTo(from, 'device', { linked: !!serial.port }); postTo(from, 'imu-mode', { mode: state.imuMode }); postTo(from, 'visible', { visible: state.mode === from }); if (serial.hello && from === 'train') postTo('train', 'line', { line: JSON.stringify(serial.hello) }); }
+      break;
+    case 'send': if (d.obj && typeof d.obj === 'object') send(d.obj); break;
+    case 'violation': state.violation = d.context; renderQuick(); break;
+    case 'violation-context': state.violation = d.context; break;
+    case 'complete': state.debrief = d.context; renderQuick(); break;
+    case 'debrief-context': state.debrief = d.context; if (pendingDebrief) { pendingDebrief = false; askAI('debrief', d.context); } break;
+    case 'chapter': state.chapter = d; renderQuick(); renderDrawerTitle(); break;
+    case 'ask-ai': openDrawer(true); askAI(d.task, d.context); break;
+  }
+});
+
+/* keyboard: forward module keys from the shell to the active frame */
+window.addEventListener('keydown', e => {
+  if (e.target.closest && e.target.closest('input, textarea, select')) return;
+  if (e.key === '?') { e.preventDefault(); openHelp(); return; }
+  if (e.key === 'Escape') { closePop(); closeHelp(); }
+  if (state.mode === 'home') {
+    if (e.key === '1') setMode('train');
+    if (e.key === '2') setMode('learn');
+    return;
+  }
+  if (/^[1-6]$|^ArrowLeft$|^ArrowRight$|^[tcl]$|^Escape$/i.test(e.key)) { postTo(state.mode, 'key', { key: e.key }); if (e.key.startsWith('Arrow')) e.preventDefault(); }
+});
+
+/* =====================================================================
+ * CONTROLLER (Web Serial) — the shell owns the port for both modes
+ * =================================================================== */
+const serial = { port: null, reader: null, keep: false, lineBuf: new E.LineBuffer(), seq: new E.SeqTracker(), writeChain: Promise.resolve(),
+  hello: null, lastRx: 0, lastImuT: null, lastImuWall: 0, lastGestureSeq: -1, imu: null };
+function setDev(tone, text) { $('#dev-chip').dataset.tone = tone; $('#dev-text').textContent = text; $('#pd-status').textContent = text; renderReady(); }
+
+async function connect() {
+  if (serial.port) { await disconnect(true); return; }
+  if (!('serial' in navigator)) { toast('This browser cannot talk to USB devices. Use Chrome or Edge on a laptop, opened from localhost.', 'warn'); return; }
+  try { const port = await navigator.serial.requestPort(); await openPort(port); }
+  catch (e) {
+    if (e.name === 'NotFoundError') return toast('No port chosen. Plug in the controller and try again.');
+    if (e.name === 'SecurityError') return toast('USB access is blocked on this page. Run it locally with python server/server.py.', 'warn');
+    setDev('bad', 'Could not open the port');
+    toast(`Could not open the port: ${e.message}. Close the Arduino Serial Monitor and try again.`, 'bad');
+  }
+}
+async function openPort(port) {
+  setDev('busy', 'Connecting…');
+  await port.open({ baudRate: 115200 });
+  serial.port = port; serial.keep = true; serial.lineBuf.reset(); serial.lastRx = Date.now();
+  updateConnectButtons();
+  for (const m of Object.keys(frames)) postTo(m, 'device', { linked: true });
+  readLoop();
+  send({ v: 1, type: 'cmd', cmd: 'hello' });
+}
+async function readLoop() {
+  const dec = new TextDecoder();
+  while (serial.port && serial.port.readable && serial.keep) {
+    serial.reader = serial.port.readable.getReader();
+    try {
+      for (;;) {
+        const { value, done } = await serial.reader.read();
+        if (done) break;
+        serial.lastRx = Date.now();
+        for (const line of serial.lineBuf.push(dec.decode(value, { stream: true }))) handleLine(line);
+      }
+    } catch (e) { break; } finally { try { serial.reader.releaseLock(); } catch (e) {} }
+  }
+  if (serial.keep) lost();
+}
+function send(obj) {
+  if (!serial.port || !serial.port.writable) return;
+  const data = new TextEncoder().encode(JSON.stringify(obj) + '\n');
+  serial.writeChain = serial.writeChain.then(async () => {
+    if (!serial.port || !serial.port.writable) return;
+    const w = serial.port.writable.getWriter();
+    try { await w.write(data); } finally { w.releaseLock(); }
+  }).catch(() => {});
+}
+async function disconnect(manual) {
+  serial.keep = false;
+  try { await serial.reader?.cancel(); } catch (e) {}
+  try { await serial.port?.close(); } catch (e) {}
+  serial.port = null; serial.hello = null; serial.imu = null;
+  updateConnectButtons();
+  for (const m of Object.keys(frames)) postTo(m, 'device', { linked: false });
+  if (manual) setDev('off', 'Controller not connected');
+}
+function lost() {
+  serial.port = null; serial.hello = null; serial.imu = null;
+  updateConnectButtons();
+  for (const m of Object.keys(frames)) postTo(m, 'device', { linked: false });
+  setDev('bad', 'Controller unplugged · will reconnect');
+  toast('Controller disconnected. Plug it back in and it reconnects by itself. Mouse and keys still work.', 'bad');
+}
+if ('serial' in navigator) {
+  navigator.serial.addEventListener('connect', async e => { if (!serial.port) { try { await openPort(e.target); toast('Controller reconnected.', 'ok'); } catch (err) {} } });
+  navigator.serial.addEventListener('disconnect', e => { if (serial.port === e.target) { serial.keep = false; lost(); } });
+  navigator.serial.getPorts().then(p => { if (p.length === 1 && !serial.port) openPort(p[0]).catch(() => {}); }).catch(() => {});
+}
+setInterval(() => { if (serial.port && serial.hello && Date.now() - serial.lastRx > 6000) setDev('warn', 'No data from controller · check cable'); }, 1000);
+
+function handleLine(line) {
+  // In Train mode the trainer frame receives every line: it runs its own validation,
+  // duplicate filtering, acknowledgements and diagnostics.
+  if (state.mode === 'train' && frames.train && frames.train.ready) postTo('train', 'line', { line });
+  const r = E.parseLine(line);
+  if (!r.ok) return;
+  const m = r.msg;
+  switch (m.type) {
+    case 'hello': {
+      serial.hello = m; serial.seq.hello(m.boot); serial.lastGestureSeq = -1;
+      const imu = m.imu && m.imu !== 'none' ? m.imu + (m.mag ? ' + magnetometer' : ' (no magnetometer)') : 'Not found';
+      $('#pd-fw').textContent = `${m.fw || '?'} · ${m.pads || 6} pads`; $('#pd-imu').textContent = imu;
+      $('#pd-level').disabled = !(m.imu && m.imu !== 'none'); $('#pd-recal').disabled = false;
+      setDev('ok', m.imu && m.imu !== 'none' ? 'Controller ready · pads + motion' : 'Controller ready · pads only');
+      toast(`Controller connected. ${m.imu && m.imu !== 'none' ? 'Hold it flat and press Level once.' : 'Motion sensor not found: pads still work.'}`, 'ok');
+      break;
+    }
+    case 'hb': if (!serial.hello) send({ v: 1, type: 'cmd', cmd: 'hello' }); else if ($('#dev-chip').dataset.tone !== 'ok') setDev('ok', 'Controller ready'); break;
+    case 'err': if (state.mode !== 'train') toast(`Controller: ${m.msg || m.code}`, 'warn'); break;
+    case 'action': {
+      const v = serial.seq.check(m);
+      if (v === 'duplicate') break;
+      flashPad(m.id);
+      if (state.mode === 'train') break; // the trainer handles and acknowledges it
+      send({ v: 1, type: 'ack', seq: m.seq, status: 'received' });
+      if (state.mode === 'learn') postTo('learn', 'pad', { id: m.id });
+      if (state.mode === 'home') { if (m.id === 'T1') setMode('train'); else if (m.id === 'T2') setMode('learn'); }
+      break;
+    }
+    case 'imu': onImu(m); break;
+    case 'gesture': onGesture(m); break;
+  }
+}
+
+/* ---------- motion ---------- */
+function onImu(m) {
+  const now = performance.now();
+  const dt = serial.lastImuWall ? (now - serial.lastImuWall) / 1000 : 0.04;
+  serial.lastImuWall = now; serial.imu = m;
+  renderImu(m);
+  if (state.imuMode === 'off' || state.mode === 'home') return;
+  if (state.imuMode === 'point' && state.mode === 'train') { const p = C.pointerStep(m.r, m.p, dt); if (p.dx || p.dy) postTo('train', 'pointer', p); }
+  else { const o = C.orbitStep(m.r, m.p, dt); if (o.dAz || o.dEl) postTo(state.mode, 'orbit', o); }
+}
+function onGesture(m) {
+  if (m.seq <= serial.lastGestureSeq) return;
+  serial.lastGestureSeq = m.seq;
+  const labels = C.GESTURE_MAP[state.mode === 'learn' ? 'learn' : 'train'];
+  $('#pd-gest').textContent = `${m.g.replace('_', ' ')} → ${labels[m.g] || ''}`;
+  if (state.mode === 'home') { if (m.g === 'flick_right' || m.g === 'tap') setMode('train'); if (m.g === 'flick_left') setMode('learn'); return; }
+  if (m.g === 'double_tap') return postTo(state.mode, 'reset-view');
+  if (state.mode === 'train') {
+    if (m.g === 'tap') postTo('train', 'tap');
+    else setImuMode(state.imuMode === 'point' ? 'orbit' : 'point', true);
+  } else {
+    if (m.g === 'tap') postTo('learn', 'action');
+    if (m.g === 'flick_right') postTo('learn', 'nav', { dir: 1 });
+    if (m.g === 'flick_left') postTo('learn', 'nav', { dir: -1 });
+  }
+}
+function setImuMode(mode, announce) {
+  state.imuMode = mode;
+  $('#pd-mode').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b.dataset.m === mode));
+  postTo('train', 'imu-mode', { mode });
+  if (announce) toast(mode === 'point' ? 'Point mode: tilt to aim, tap to select.' : mode === 'orbit' ? 'Orbit mode: tilt to turn the view.' : 'Tilt control off.');
+}
+$('#pd-mode').querySelectorAll('button').forEach(b => b.addEventListener('click', () => setImuMode(b.dataset.m, true)));
+function renderImu(m) {
+  if (!$('#pop').hidden) {
+    $('#pd-roll').textContent = (m.r > 0 ? '+' : '') + m.r.toFixed(1) + '°';
+    $('#pd-pitch').textContent = (m.p > 0 ? '+' : '') + m.p.toFixed(1) + '°';
+    const k = 56 / 40;
+    $('#tilt-dot').setAttribute('cx', Math.max(-50, Math.min(50, m.r * k)));
+    $('#tilt-dot').setAttribute('cy', Math.max(-50, Math.min(50, m.p * k)));
+    if (Number.isFinite(m.dmag)) {
+      const w = C.wandLevel(m.dmag);
+      $('#wand-bar').style.width = (w.level * 100) + '%';
+      $('#wand-text').textContent = w.text; $('#wand-val').textContent = (m.dmag > 0 ? '+' : '') + m.dmag.toFixed(1) + ' µT';
+    } else { $('#wand-text').textContent = 'No magnetometer on this board'; $('#wand-val').textContent = '—'; }
+  }
+}
+$('#pd-level').addEventListener('click', () => { send({ v: 1, type: 'cmd', cmd: 'imu_zero' }); toast('Levelling… keep the controller flat and still for 2 seconds.'); });
+$('#pd-recal').addEventListener('click', () => { send({ v: 1, type: 'cmd', cmd: 'recal' }); toast('Recalibrating pads… hands off for 2 seconds.'); });
+
+/* ---------- device popover ---------- */
+const pop = $('#pop');
+function openPop() { pop.hidden = false; $('#dev-chip').setAttribute('aria-expanded', 'true'); renderPadTables(); gsap.fromTo(pop, { y: -8, opacity: 0 }, { y: 0, opacity: 1, duration: D(0.25) }); if (serial.imu) renderImu(serial.imu); }
+function closePop() { pop.hidden = true; $('#dev-chip').setAttribute('aria-expanded', 'false'); }
+$('#dev-chip').addEventListener('click', () => (pop.hidden ? openPop() : closePop()));
+$('#pop-close').addEventListener('click', closePop);
+document.addEventListener('pointerdown', e => { if (!pop.hidden && !pop.contains(e.target) && !$('#dev-chip').contains(e.target)) closePop(); });
+$('#pd-connect').addEventListener('click', connect);
+$('#st-dev-btn').addEventListener('click', () => (serial.port ? openPop() : connect()));
+function updateConnectButtons() {
+  $('#pd-connect').textContent = serial.port ? 'Disconnect' : 'Connect';
+  $('#st-dev-btn').textContent = serial.port ? 'Controller settings' : 'Connect controller';
+  if (!serial.port) { $('#pd-level').disabled = true; $('#pd-recal').disabled = true; $('#pd-fw').textContent = '—'; $('#pd-imu').textContent = '—'; }
+}
+function flashPad(id) {
+  const el = $(`#pd-pads [data-pad="${id}"]`);
+  if (el) { el.classList.add('hit'); setTimeout(() => el.classList.remove('hit'), 450); }
+}
+function renderPadTables() {
+  const mode = state.mode === 'learn' ? 'learn' : 'train';
+  const map = C.PAD_MAP[mode];
+  $('#pd-pads-title').textContent = state.mode === 'home' ? 'Pads (on Home: T1 opens Train, T2 opens Learn)' : `Pads in ${mode === 'learn' ? 'Learn' : 'Train'} mode`;
+  $('#pd-pads').innerHTML = Object.entries(map).map(([k, v]) => `<div data-pad="${k}"><b>${k}</b>${esc(v)}</div>`).join('');
+  const rows = Object.keys(map).map(k => `<tr><td><span class="pad-chip">${k}</span></td><td>${esc(C.PAD_MAP.train[k])}</td><td>${esc(C.PAD_MAP.learn[k])}</td></tr>`).join('');
+  const head = '<tr><td></td><td class="eyebrow">Train</td><td class="eyebrow">Learn</td></tr>';
+  $('#cheat-pads').innerHTML = head + rows; $('#help-pads').innerHTML = head + rows;
+}
+
+/* =====================================================================
+ * AI ASSISTANT
+ * =================================================================== */
+const msgs = $('#msgs');
+async function checkAI() {
+  try {
+    const r = await fetch('./api/status', { cache: 'no-store' });
+    if (!r.ok) throw new Error('no api');
+    const s = await r.json();
+    Object.assign(state.ai, { checked: true, server: true, configured: !!s.configured, provider: s.provider, model: s.model });
+  } catch (e) { Object.assign(state.ai, { checked: true, server: false, configured: false }); }
+  renderAIStatus(); renderReady();
+}
+function renderAIStatus() {
+  const a = state.ai;
+  const chip = $('#ai-chip');
+  const n = window.MRICoach ? MRICoach.count : 0;
+  if (a.configured) { chip.dataset.tone = 'ai'; $('#ai-text').textContent = 'Coach · AI'; $('#ai-status').textContent = `Local AI model on: ${a.model}. The knowledge base is the backup.`; }
+  else { chip.dataset.tone = 'ok'; $('#ai-text').textContent = 'Coach'; $('#ai-status').textContent = `Offline coach · ${n} topics. No account, key or internet needed.`; }
+}
+function renderDrawerTitle() { $('#drawer-title').textContent = state.mode === 'learn' ? 'AI tutor' : 'AI coach'; }
+function openDrawer(force) {
+  state.drawer = force === undefined ? !state.drawer : force;
+  $('#body').classList.toggle('drawer-open', state.drawer);
+  $('#ai-chip').setAttribute('aria-expanded', state.drawer);
+  if (state.drawer) { renderQuick(); if (!msgs.children.length) welcome(); gsap.fromTo('#drawer', { x: 24, opacity: 0.4 }, { x: 0, opacity: 1, duration: D(0.3), clearProps: 'transform,opacity' }); setTimeout(() => $('#ask-input').focus({ preventScroll: true }), 150); }
+}
+$('#ai-chip').addEventListener('click', () => openDrawer());
+$('#st-ai-btn').addEventListener('click', () => openDrawer(true));
+$('#drawer-close').addEventListener('click', () => openDrawer(false));
+$('#drawer-clear').addEventListener('click', () => { msgs.innerHTML = ''; state.history = []; welcome(); });
+
+function welcome() {
+  const t = state.mode === 'learn'
+    ? 'Hi. I can explain anything in the current chapter, connect it to safety, or quiz you. Ask in your own words.'
+    : 'Hi. When the assessor flags a mistake, press "Explain my last mistake" and I will explain it using the rule and what you did. After a run, ask me for a debrief.';
+  addMsg('bot', t, { built: !state.ai.configured, intro: true });
+}
+function renderQuick() {
+  const q = $('#quick');
+  const items = [];
+  if (state.mode === 'learn') {
+    items.push(['Explain this chapter simply', () => askTutor('Explain this chapter simply, as if to a first-year student.')]);
+    items.push(['Quiz me', () => askAI('quiz', chapterContext())]);
+    items.push(['How does this link to safety?', () => askTutor('How does this chapter connect to MRI safety in practice?')]);
+  } else {
+    items.push([state.violation ? `Explain my last mistake (${state.violation.violations[0].rule})` : 'Explain my last mistake', () => state.violation ? askAI('explain', state.violation) : addMsg('bot', 'No mistakes recorded yet in this attempt. When the assessor flags one, ask me again.', { built: true })]);
+    items.push(['Debrief this attempt', () => requestDebrief()]);
+    items.push(['What does MR Conditional mean?', () => askTutor('What does MR Conditional mean, and how is it different from MR Safe and MR Unsafe?')]);
+  }
+  q.innerHTML = '';
+  for (const [label, fn] of items) { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; b.addEventListener('click', fn); q.appendChild(b); }
+}
+let pendingDebrief = false;
+function requestDebrief() {
+  if (frames.train && frames.train.ready) { pendingDebrief = true; postTo('train', 'get-debrief'); setTimeout(() => { if (pendingDebrief) { pendingDebrief = false; if (state.debrief) askAI('debrief', state.debrief); else addMsg('bot', 'Open Train and start an attempt first.', { built: true }); } }, 800); }
+  else addMsg('bot', 'Open Train and start an attempt first.', { built: true });
+}
+function chapterContext() {
+  const c = state.chapter;
+  return c ? { module: 'Inside the scanner', chapter: `${c.index + 1}. ${c.title}`, section: c.group, notes: c.notes } : { module: 'MRISafe Twin', chapter: 'General MRI questions', notes: '' };
+}
+function askTutor(question) {
+  const ctx = state.mode === 'learn' ? chapterContext() : { module: 'Safety trainer', chapter: 'MRI pre-scan safety', notes: state.violation ? 'Last recorded mistake: ' + state.violation.violations.map(v => `${v.rule} ${v.title}: ${v.evidence}`).join('; ') : '' };
+  askAI('tutor', ctx, question);
+}
+$('#ask').addEventListener('submit', e => {
+  e.preventDefault();
+  const q = $('#ask-input').value.trim();
+  if (!q || state.busy) return;
+  $('#ask-input').value = '';
+  askTutor(q);
+});
+
+async function askAI(task, context, question) {
+  if (state.busy) return;
+  if (!state.drawer) openDrawer(true);
+  const label = { explain: 'Explain my last mistake', debrief: 'Debrief this attempt', quiz: 'Quiz me' }[task] || question;
+  addMsg('user', label);
+  if (task === 'tutor' || task === 'quiz') state.history.push({ role: 'user', content: task === 'quiz' ? 'Quiz me on this chapter.' : question });
+  const remember = t => { if (task === 'tutor' || task === 'quiz') state.history.push({ role: 'assistant', content: t }); };
+  // Offline coach: answers from knowledge-base.js on this computer. Always available.
+  const offline = note => {
+    const t = MRICoach.respond(task, context, question);
+    addMsg('bot', note ? `${note}\n\n${t}` : t, { built: true, warn: !!note });
+    remember(t);
+  };
+  if (!state.ai.configured) return offline();
+  state.busy = true;
+  const typing = addMsg('bot', '', { typing: true });
+  try {
+    const r = await fetch('./api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task, context, question, history: state.history.slice(-7, -1) }) });
+    const out = await r.json().catch(() => ({ ok: false, error: 'Bad reply from the local server.' }));
+    typing.remove();
+    if (!out.ok) offline(`${out.error || 'The local AI model did not answer.'} Showing the knowledge-base answer instead.`);
+    else { addMsg('bot', out.text, { model: out.model, provider: out.provider, grounded: out.grounded, note: out.note }); remember(out.text); }
+  } catch (e) {
+    typing.remove();
+    offline('Could not reach the local AI server. Showing the knowledge-base answer instead.');
+  } finally { state.busy = false; }
+}
+function addMsg(who, text, o = {}) {
+  const el = document.createElement('div');
+  el.className = 'msg ' + who;
+  if (o.typing) el.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
+  else {
+    let meta = '';
+    if (who === 'bot' && !o.intro) {
+      meta = o.built ? '<span class="badge built">Knowledge base · offline</span>' : `<span class="badge gen">AI · ${esc(o.model || 'generated')}</span>`;
+      if (o.warn) meta += '<span class="badge warn">AI unavailable</span>';
+      if (o.grounded === false) meta += '<span class="badge warn">Check against the rule card</span>';
+    }
+    const body = esc(text).replace(/\[(R-[A-Z]+-\d{2})\]/g, '<span class="rulechip">$1</span>');
+    el.innerHTML = (meta ? `<div class="meta">${meta}</div>` : '') + body + (o.note ? `<div class="meta" style="margin:8px 0 0">${esc(o.note)}</div>` : '');
+  }
+  msgs.appendChild(el);
+  msgs.scrollTop = msgs.scrollHeight;
+  gsap.fromTo(el, { y: 8, opacity: 0 }, { y: 0, opacity: 1, duration: D(0.25) });
+  return el;
+}
+
+/* =====================================================================
+ * HOME readiness, help, toasts
+ * =================================================================== */
+function renderReady() {
+  const dev = $('#st-dev');
+  if (serial.port && serial.hello) { dev.dataset.tone = 'ok'; $('#st-dev-p').textContent = $('#dev-text').textContent + '. ' + (serial.hello.imu && serial.hello.imu !== 'none' ? 'Level it once from the controller panel.' : ''); }
+  else if (serial.port) { dev.dataset.tone = 'warn'; $('#st-dev-p').textContent = 'Port open, waiting for the controller to answer…'; }
+  else { dev.dataset.tone = 'off'; $('#st-dev-p').textContent = 'Optional. Connect the ESP32-S3 with the six pads and the MPU9250. Without it, use the mouse and keys 1–6.'; }
+  const ai = $('#st-ai');
+  if (!state.ai.checked) return;
+  if (state.ai.configured) { ai.dataset.tone = 'ok'; $('#st-ai-p').textContent = `Coach is on, with a local AI model (${state.ai.model}). The knowledge base is the backup.`; }
+  else { ai.dataset.tone = 'ok'; $('#st-ai-p').textContent = `Offline coach ready: ${MRICoach.count} topics, no account or internet. An optional local AI model can be added in server/.env.`; }
+}
+function checkBrowser() {
+  const okSerial = 'serial' in navigator;
+  const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname) || location.protocol === 'https:';
+  const el = $('#st-br');
+  el.dataset.tone = okSerial && local ? 'ok' : 'warn';
+  $('#st-br-p').textContent = okSerial && local ? 'Chrome/Edge with USB support. Ready.' : okSerial ? 'Open the page from http://localhost to use USB.' : 'This browser has no USB (Web Serial) support. Use Chrome or Edge on a laptop. Everything else works.';
+}
+function openHelp() { $('#help').hidden = false; renderPadTables(); gsap.fromTo('#help .modal-card', { y: 16, opacity: 0 }, { y: 0, opacity: 1, duration: D(0.3) }); $('#help-close').focus(); }
+function closeHelp() { $('#help').hidden = true; }
+$('#help-btn').addEventListener('click', openHelp);
+$('#help-close').addEventListener('click', closeHelp);
+$('#help').addEventListener('click', e => { if (e.target.id === 'help') closeHelp(); });
+function toast(msg, tone = '') {
+  const host = $('#toasts');
+  const el = document.createElement('div'); el.className = 'toast ' + tone; el.textContent = msg;
+  host.appendChild(el);
+  gsap.fromTo(el, { y: 12, opacity: 0 }, { y: 0, opacity: 1, duration: D(0.25) });
+  setTimeout(() => gsap.to(el, { opacity: 0, duration: D(0.3), onComplete: () => el.remove() }), tone ? 5000 : 3200);
+  while (host.children.length > 3) host.firstChild.remove();
+}
+
+/* =====================================================================
+ * HAND CONTROL (MediaPipe). Camera frames are processed in this browser only.
+ * =================================================================== */
+const handBtn = $('#hand-btn');
+let handOn = false;
+/* Feedback for hand control: a live region for screen readers, and optional spoken status.
+ * Only status changes are announced (never every frame). Spoken feedback is off until chosen. */
+const handLive = $('#hand-live'), speakBtn = $('#hand-speak'), swapBtn = $('#hand-swap');
+const SPEAK_KEY = 'mrisafe-hand-speak', SWAP_KEY = 'mrisafe-hand-swap';
+function prefGet(k) { try { return localStorage.getItem(k) === '1'; } catch (e) { return false; } }
+function prefSet(k, v) { try { localStorage.setItem(k, v ? '1' : '0'); } catch (e) { /* storage blocked: the choice lasts this page */ } }
+let speakOn = prefGet(SPEAK_KEY), swapOn = prefGet(SWAP_KEY);
+function announce(msg) {
+  if (!msg) return;
+  handLive.textContent = '';
+  setTimeout(() => { handLive.textContent = msg; }, 30); // re-set so a repeated message is read again
+  if (speakOn && 'speechSynthesis' in window) {
+    try { speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(msg)); }
+    catch (e) { /* no voice available: the live region still carries the message */ }
+  }
+}
+function renderHandTools() {
+  speakBtn.setAttribute('aria-pressed', String(speakOn)); speakBtn.textContent = speakOn ? 'Speaking: on' : 'Speak feedback';
+  swapBtn.setAttribute('aria-pressed', String(swapOn)); swapBtn.textContent = swapOn ? 'Hands swapped' : 'Swap hands';
+}
+speakBtn.addEventListener('click', () => {
+  speakOn = !speakOn; prefSet(SPEAK_KEY, speakOn); renderHandTools();
+  if (speakOn) announce('Spoken feedback on'); else if ('speechSynthesis' in window) { try { speechSynthesis.cancel(); } catch (e) { /* ignore */ } }
+});
+swapBtn.addEventListener('click', () => {
+  swapOn = !swapOn; prefSet(SWAP_KEY, swapOn); MRIHands.setSwapHands(swapOn); renderHandTools();
+  announce(swapOn ? 'Hands swapped' : 'Hands normal');
+});
+
+function handEvent(e) {
+  const mode = state.mode;
+  if (e.type === 'pos') { if (mode === 'train') postTo('train', 'hand-pos', { x: e.x, y: e.y, visible: true }); return; }
+  if (e.type === 'lost') { postTo('train', 'hand-pos', { visible: false }); return; }
+  if (e.type === 'zoomOn' || e.type === 'zoomOff') return; // announced through the status line
+  if (mode !== 'train' && mode !== 'learn') return; // hand gestures do nothing on Home
+  if (e.type === 'zoom') { postTo(mode, 'zoom', { dz: e.dz }); return; }
+  if (e.type === 'tap') { announce('Tap'); if (mode === 'train') postTo('train', 'hand-tap'); else postTo('learn', 'action'); }
+  else if (e.type === 'drag') postTo(mode, 'orbit', { dAz: -e.dx * 3.2, dEl: e.dy * 2.0 });
+  else if (e.type === 'reset') { announce('View reset'); postTo(mode, 'reset-view'); }
+}
+function renderHand() {
+  handBtn.setAttribute('aria-pressed', String(handOn));
+  handBtn.textContent = handOn ? 'Hand control: on' : 'Hand control';
+  $('#hand-card').hidden = !handOn;
+}
+async function toggleHand() {
+  if (handOn) {
+    handOn = false; MRIHands.stop(); renderHand(); postTo('train', 'hand-pos', { visible: false });
+    return;
+  }
+  if (!window.MRIHands) { toast('Hand control did not load. Reload the page.', 'warn'); return; }
+  handOn = true; renderHand();
+  try {
+    await MRIHands.start({ preview: $('#hand-canvas'), onEvent: handEvent, onStatus: (s, d) => {
+      $('#hand-status').textContent = d;
+      announce(d || (s === 'off' ? 'Hand control off' : ''));
+    } });
+  } catch (err) {
+    handOn = false; MRIHands.stop(); renderHand();
+    toast(err.message, 'bad');
+  }
+}
+handBtn.addEventListener('click', toggleHand);
+MRIHands.setSwapHands(swapOn);
+renderHandTools();
+$('#hand-stop').addEventListener('click', toggleHand);
+
+/* boot */
+renderPadTables(); updateConnectButtons(); checkBrowser(); checkAI(); renderDrawerTitle();
+gsap.from('#home .home-inner > *', { y: 14, duration: D(0.6), stagger: D(0.06), ease: 'power3.out', clearProps: 'transform' });
+const startMode = (location.hash || '').replace('#', '');
+if (startMode === 'train' || startMode === 'learn') setMode(startMode);
+window.__shell = { state, setMode, handleLine, askAI, postTo, frames, handEvent };
+})();
+</script>
+</body>
+</html>

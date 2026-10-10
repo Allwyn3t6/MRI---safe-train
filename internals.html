@@ -1,0 +1,2053 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Inside the Scanner</title>
+<script>if (/[?&]embed/.test(location.search)) document.documentElement.classList.add('embed');</script>
+<meta name="description" content="3D cutaway of an MRI scanner: construction layer by layer and how it produces an image.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* MRISafe Twin shared colour tokens. Dark is the default; light is set by data-theme="light"
+ * on <html> (theme.js). Pages keep their own dark token values in :root; the light block
+ * below uses a higher-specificity selector, so it wins regardless of load order. */
+
+:root {
+  /* extra surfaces used by every page (dark values) */
+  --well: #0a121c;
+  --bg-deep: #071019;
+  --header-grad: linear-gradient(180deg, #0b1320, #08101a);
+  --card-grad: linear-gradient(160deg, #10243a, #0d1826 60%);
+  --stage-grad: radial-gradient(120% 90% at 50% 10%, #12233a 0%, #08111c 60%, #060b12 100%);
+  --glass: rgba(12, 20, 32, 0.82);
+  --glass-strong: rgba(6, 12, 20, 0.92);
+  --tag-bg: rgba(8, 15, 25, 0.82);
+  --overlay: rgba(4, 8, 13, 0.72);
+  --toast-bg: #0f1c2b;
+  --hint-bg: rgba(10, 22, 34, 0.9);
+  --hint-text: #ffe2b0;
+  --ok-text: #9fe6c6;
+  --warn-text: #ffd9a3;
+  --scene-bg: #070c14;
+  --shadow: rgba(0, 0, 0, 0.45);
+  --text-soft: #c2d0de;
+  --card-top: #10243a;
+  --rule-text: #ffb3bb;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eef2f6;
+  --panel: #ffffff;
+  --raised: #f5f8fb;
+  --raised-2: #e6edf5;
+  --line: rgba(20, 50, 80, 0.12);
+  --line-strong: rgba(20, 50, 80, 0.26);
+  --text: #13212f;
+  --muted: #4f6478;
+  --faint: #76889c;
+  --cyan: #0a7790;
+  --cyan-dim: rgba(10, 119, 144, 0.10);
+  --blue: #2f64d6;
+  --ok: #17845a;
+  --ok-dim: rgba(23, 132, 90, 0.11);
+  --warn: #9c6400;
+  --warn-dim: rgba(156, 100, 0, 0.12);
+  --bad: #c4283a;
+  --bad-dim: rgba(196, 40, 58, 0.10);
+
+  --well: #e7eef5;
+  --bg-deep: #dde6ee;
+  --header-grad: linear-gradient(180deg, #ffffff, #f1f5f9);
+  --card-grad: linear-gradient(160deg, #e2f1f6, #f7fbfd 60%);
+  --stage-grad: radial-gradient(120% 90% at 50% 10%, #ffffff 0%, #e6edf4 65%, #d9e3ec 100%);
+  --glass: rgba(255, 255, 255, 0.9);
+  --glass-strong: rgba(255, 255, 255, 0.96);
+  --tag-bg: rgba(255, 255, 255, 0.92);
+  --overlay: rgba(30, 45, 60, 0.35);
+  --toast-bg: #ffffff;
+  --hint-bg: rgba(255, 250, 240, 0.97);
+  --hint-text: #6b4300;
+  --ok-text: #0d6a45;
+  --warn-text: #7a4d00;
+  --scene-bg: #e4ebf2;
+  --shadow: rgba(20, 40, 60, 0.18);
+  --text-soft: #3b4f63;
+  --card-top: #e2f1f6;
+  --rule-text: #a3202f;
+}
+
+/* Replace-the-dark-literal helpers used in the page CSS */
+:root[data-theme="light"] .brand h1 span { color: var(--cyan); }
+:root[data-theme="light"] .pad .pname { color: #f3dccb; }
+
+</style>
+<script>
+/* MRISafe Twin theme switch: dark (default) or light, shared by the shell and both modules.
+ * The choice is stored in this browser only (localStorage). Other same-origin frames pick it
+ * up through the storage event, and every page listens for the 'mrisafe-theme' event so
+ * the 3D scene can repaint its background. */
+(function () {
+  const KEY = 'mrisafe-theme';
+  const root = document.documentElement;
+
+  function stored() {
+    try { return localStorage.getItem(KEY); } catch (e) { return null; }
+  }
+  function save(v) {
+    try { localStorage.setItem(KEY, v); } catch (e) { /* storage blocked: theme still applies for this page */ }
+  }
+  function current() { return stored() === 'light' ? 'light' : 'dark'; }
+
+  function paintButtons(v) {
+    document.querySelectorAll('[data-theme-toggle]').forEach(b => {
+      b.textContent = v === 'dark' ? 'Light' : 'Dark';
+      b.setAttribute('aria-pressed', String(v === 'light'));
+      b.title = v === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme';
+    });
+  }
+
+  function apply(v) {
+    root.setAttribute('data-theme', v);
+    root.style.colorScheme = v;
+    paintButtons(v);
+    window.dispatchEvent(new CustomEvent('mrisafe-theme', { detail: v }));
+  }
+
+  function set(v) { save(v); apply(v); }
+  function toggle() { set(current() === 'dark' ? 'light' : 'dark'); }
+
+  window.MRITheme = { get: current, set, toggle };
+  apply(current());
+  document.addEventListener('DOMContentLoaded', () => paintButtons(current()));
+  window.addEventListener('storage', e => { if (e.key === KEY) apply(current()); });
+  document.addEventListener('click', e => {
+    const b = e.target.closest && e.target.closest('[data-theme-toggle]');
+    if (b) toggle();
+  });
+})();
+
+</script>
+<style>
+/* Layout: engineering cutaway console — chapter rail | live 3D cutaway with layer controls | explanation and instruments. Single dark theme by design. */
+:root {
+  color-scheme: dark;
+  --bg: #070c14;
+  --panel: #0c1420;
+  --raised: #121d2c;
+  --raised-2: #182637;
+  --line: rgba(130, 180, 230, 0.13);
+  --line-strong: rgba(130, 190, 240, 0.26);
+  --text: #dbe6f1;
+  --muted: #8297ad;
+  --faint: #56697e;
+  --cyan: #45d6ec;
+  --cyan-dim: rgba(69, 214, 236, 0.14);
+  --ok: #3fd99a;
+  --warn: #f4b549;
+  --bad: #ff5f6f;
+  --copper: #d08a5a;
+  --copper-hi: #f1b689;
+  --ax-x: #ff6b6b;
+  --ax-y: #5ee08a;
+  --ax-z: #5aa8ff;
+  --f-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --r: 12px;
+}
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 var(--f-body); -webkit-font-smoothing: antialiased; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+img, canvas { max-width: 100%; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; border-radius: 6px; }
+h1, h2, h3 { margin: 0; font-family: var(--f-display); text-wrap: balance; }
+.eyebrow { font-family: var(--f-mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.mono { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+.kbd { font: 11px var(--f-mono); padding: 1px 5px; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 5px; color: var(--muted); }
+
+.app { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100%; min-height: 600px; }
+header.top { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--header-grad); }
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand h1 { font-size: 17px; font-weight: 750; font-stretch: 112%; }
+.brand h1 span { color: var(--cyan); }
+nav.tabs { display: flex; gap: 4px; padding: 3px; border-radius: 10px; background: var(--raised); border: 1px solid var(--line); margin-left: 8px; }
+nav.tabs a { text-decoration: none; color: var(--muted); font-size: 13px; font-weight: 600; padding: 6px 12px; border-radius: 7px; }
+nav.tabs a[aria-current="page"] { background: var(--cyan-dim); color: var(--cyan); }
+nav.tabs a:hover { color: var(--text); }
+.spacer { flex: 1; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 32px; padding: 0 13px; border-radius: 9px; border: 1px solid var(--line-strong); background: var(--raised); cursor: pointer; font-size: 13px; font-weight: 550; white-space: nowrap; transition: background .15s, border-color .15s; }
+.btn:hover { background: var(--raised-2); border-color: rgba(130,190,240,.4); }
+.btn.primary { background: linear-gradient(180deg, #2bb8d0, #1f93ad); border-color: #4fd8ee; color: #04121a; }
+.btn.small { height: 28px; padding: 0 10px; font-size: 12px; }
+.btn[aria-pressed="true"] { border-color: var(--cyan); color: var(--cyan); background: var(--cyan-dim); }
+.btn.danger { border-color: rgba(255,95,111,.6); color: #ffc2c8; }
+.chip { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 11px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--raised); font-size: 12.5px; white-space: nowrap; }
+
+main.grid { display: grid; grid-template-columns: 262px minmax(0, 1fr) 392px; gap: 10px; padding: 10px 12px 12px; min-height: 0; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); min-height: 0; display: flex; flex-direction: column; }
+.panel-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px 8px; }
+.scroll { overflow: auto; scrollbar-width: thin; scrollbar-color: #24364b transparent; }
+
+/* chapter rail */
+.chapters { list-style: none; margin: 0; padding: 0 8px 8px; display: grid; gap: 2px; }
+.chapters .grp { font: 600 10.5px var(--f-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--faint); padding: 10px 8px 4px; }
+.chapters button { width: 100%; display: grid; grid-template-columns: 26px minmax(0,1fr); gap: 8px; align-items: center; text-align: left; padding: 7px 8px; border-radius: 9px; border: 1px solid transparent; background: transparent; cursor: pointer; font-size: 13px; }
+.chapters button .n { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; font: 600 11px var(--f-mono); color: var(--muted); background: var(--raised); border: 1px solid var(--line); }
+.chapters button:hover { background: var(--raised); }
+.chapters button[aria-current="step"] { background: var(--cyan-dim); border-color: rgba(69,214,236,.35); }
+.chapters button[aria-current="step"] .n { color: #04121a; background: var(--cyan); border-color: var(--cyan); }
+.chapters button.seen .n { color: var(--cyan); }
+.rail-foot { margin-top: auto; padding: 12px 14px 14px; border-top: 1px solid var(--line); display: grid; gap: 10px; }
+.range { display: grid; gap: 4px; }
+.range label { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+.range label b { font: 600 12px var(--f-mono); color: var(--text); }
+input[type=range] { width: 100%; accent-color: var(--cyan); }
+.toggles { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* stage */
+.stage { position: relative; border-radius: var(--r); overflow: hidden; border: 1px solid var(--line); background: var(--stage-grad); min-height: 320px; min-width: 0; }
+#scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+#labels { position: absolute; inset: 0; pointer-events: none; }
+.hud-title { position: absolute; left: 14px; top: 12px; z-index: 3; max-width: calc(100% - 300px); pointer-events: none; }
+.hud-title .eyebrow { color: var(--cyan); }
+.hud-title h2 { font-size: clamp(16px, 1.9vw, 22px); font-weight: 760; font-stretch: 112%; margin-top: 2px; text-shadow: 0 2px 18px rgba(0,0,0,.6); }
+.vp-tools { position: absolute; top: 12px; right: 12px; display: flex; gap: 6px; z-index: 3; }
+.vp-tools .btn { background: var(--glass); backdrop-filter: blur(6px); }
+.stamp { position: absolute; left: 12px; bottom: 60px; z-index: 3; font: 500 10.5px var(--f-mono); letter-spacing: .12em; color: var(--muted); background: var(--glass); border: 1px dashed var(--line-strong); padding: 5px 9px; border-radius: 6px; pointer-events: none; }
+.stepbar { position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 3; display: flex; align-items: center; gap: 10px; }
+.stepbar .dots { flex: 1; display: flex; gap: 4px; }
+.stepbar .dots i { flex: 1; height: 4px; border-radius: 2px; background: #1d2f44; }
+.stepbar .dots i.on { background: var(--cyan); }
+.stepbar .btn { background: rgba(12,20,32,.85); backdrop-filter: blur(6px); }
+.stepbar .btn.primary { background: linear-gradient(180deg, #2bb8d0, #1f93ad); color: #04121a; }
+.btn[disabled] { opacity: .4; cursor: not-allowed; }
+.readouts { position: absolute; right: 12px; top: 54px; z-index: 3; display: grid; gap: 6px; justify-items: end; pointer-events: none; }
+.readout { font: 500 12px var(--f-mono); background: rgba(8,14,22,.82); border: 1px solid var(--line-strong); border-radius: 8px; padding: 6px 10px; text-align: right; }
+.readout b { display: block; font-size: 18px; color: var(--cyan); }
+.loading { position: absolute; inset: 0; display: grid; place-items: center; z-index: 6; background: var(--bg); color: var(--muted); font: 12px var(--f-mono); letter-spacing: .1em; }
+.loading .ring { width: 54px; height: 54px; border-radius: 50%; border: 2px solid #1d3047; border-top-color: var(--cyan); animation: spin 1s linear infinite; margin: 0 auto 12px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.tag3d { font: 600 11px var(--f-body); color: var(--text); background: rgba(8,15,25,.84); border: 1px solid var(--line-strong); padding: 3px 8px; border-radius: 6px; white-space: nowrap; display: flex; gap: 6px; align-items: center; }
+.tag3d.focus { border-color: var(--cyan); color: #c8f6ff; box-shadow: 0 0 0 3px rgba(69,214,236,.15); }
+.tag3d .t { font: 600 10px var(--f-mono); color: var(--muted); }
+.tag3d.plain { background: transparent; border: none; font: 600 10.5px var(--f-mono); letter-spacing: .1em; color: var(--muted); }
+.tag3d.freq { font: 500 10.5px var(--f-mono); background: rgba(8,15,25,.7); }
+
+/* right panel */
+.content .body { padding: 2px 16px 18px; display: grid; gap: 14px; }
+.content h2 { font-size: 21px; font-weight: 750; font-stretch: 108%; line-height: 1.2; }
+.content p { margin: 0; color: #c7d4e1; }
+.content .lead { font-size: 15px; color: var(--text); }
+.facts { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.facts li { display: grid; grid-template-columns: 118px minmax(0,1fr); gap: 10px; font-size: 12.8px; padding: 7px 10px; border-radius: 8px; background: var(--raised); border: 1px solid var(--line); }
+.facts li b { font: 600 10.5px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding-top: 2px; }
+.ctrl { display: grid; gap: 10px; padding: 12px; border-radius: 10px; background: var(--well); border: 1px solid var(--line-strong); }
+.ctrl .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.seg { display: inline-flex; padding: 3px; gap: 3px; border-radius: 9px; background: var(--raised); border: 1px solid var(--line); flex-wrap: wrap; }
+.seg button { border: none; background: transparent; padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.seg button[aria-pressed="true"] { background: var(--cyan-dim); color: var(--cyan); }
+.calc { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
+.calc div { padding: 8px 10px; border-radius: 8px; background: var(--raised); border: 1px solid var(--line); font-size: 11.5px; color: var(--muted); }
+.calc b { display: block; font: 600 17px var(--f-mono); color: var(--text); margin-top: 2px; }
+.formula { font: 500 12.5px var(--f-mono); color: var(--copper-hi); background: rgba(208,138,90,.08); border: 1px solid rgba(208,138,90,.3); border-radius: 8px; padding: 8px 10px; }
+.note { font-size: 12px; color: var(--muted); }
+.safety { font-size: 12.8px; padding: 10px 12px; border-radius: 9px; border: 1px solid rgba(244,181,73,.45); background: rgba(244,181,73,.08); color: var(--hint-text); }
+.safety b { color: var(--warn); }
+canvas.chart { width: 100%; height: 170px; display: block; background: var(--well); border-radius: 8px; border: 1px solid var(--line); }
+.imgpair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.imgpair figure { margin: 0; display: grid; gap: 4px; }
+.imgpair canvas { width: 100%; aspect-ratio: 1; image-rendering: pixelated; background: #000; border-radius: 8px; border: 1px solid var(--line); }
+.imgpair figcaption { font: 500 10.5px var(--f-mono); color: var(--muted); letter-spacing: .06em; }
+.bars { display: grid; gap: 5px; }
+.bars .b { display: grid; grid-template-columns: 112px minmax(0,1fr) 44px; gap: 8px; align-items: center; font-size: 12px; }
+.bars .track { height: 10px; border-radius: 5px; background: var(--raised-2); overflow: hidden; }
+.bars .track i { display: block; height: 100%; background: linear-gradient(90deg, #8aa3bb, #eef4fa); border-radius: 5px; }
+.flow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
+.flow span { padding: 4px 9px; border-radius: 7px; background: var(--raised); border: 1px solid var(--line-strong); }
+.flow em { font-style: normal; color: var(--faint); }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.steps li { display: grid; grid-template-columns: 22px minmax(0,1fr); gap: 8px; padding: 6px 8px; border-radius: 8px; font-size: 12.8px; color: var(--muted); }
+.steps li i { font: 600 11px var(--f-mono); font-style: normal; color: var(--faint); }
+.steps li.done { color: var(--text); }
+.steps li.done i { color: var(--ok); }
+.steps li.now { background: var(--cyan-dim); color: var(--text); }
+.quiz { display: grid; gap: 12px; }
+.q { padding: 12px; border-radius: 10px; background: var(--raised); border: 1px solid var(--line); display: grid; gap: 8px; }
+.q p { font-weight: 600; color: var(--text); }
+.q .opts { display: grid; gap: 5px; }
+.q .opts button { text-align: left; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line-strong); background: #0d1724; cursor: pointer; font-size: 12.8px; }
+.q .opts button:hover { border-color: var(--cyan); }
+.q .opts button.right { border-color: var(--ok); background: rgba(63,217,154,.12); }
+.q .opts button.wrong { border-color: var(--bad); background: rgba(255,95,111,.1); }
+.q .why { font-size: 12.5px; color: var(--muted); }
+.legend-ax { display: flex; gap: 10px; font: 600 11px var(--f-mono); }
+.legend-ax span::before { content: ""; display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: middle; background: currentColor; }
+
+html.embed header.top { display: none; }
+html.embed body { overflow: hidden; }
+html.embed .app { grid-template-rows: minmax(0, 1fr); }
+@media (max-width: 1280px) { main.grid { grid-template-columns: 236px minmax(0, 1fr) 350px; } }
+@media (max-width: 980px) {
+  .app { height: auto; min-height: 0; }
+  header.top { flex-wrap: wrap; }
+  main.grid { grid-template-columns: minmax(0, 1fr); padding: 10px 16px 16px; }
+  .stage { order: 1; height: 62vh; min-height: 380px; }
+  .content { order: 2; }
+  .rail { order: 3; }
+  .hud-title { max-width: calc(100% - 28px); top: 52px; }
+  .readouts { top: 120px; }
+}
+@media (max-width: 520px) { .facts li { grid-template-columns: minmax(0,1fr); gap: 2px; } .calc { grid-template-columns: minmax(0,1fr); } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand">
+      <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true">
+        <rect x="1" y="3" width="32" height="28" rx="9" fill="#e9eef3"/>
+        <circle cx="17" cy="16" r="8.5" fill="#1b2633"/>
+        <circle cx="17" cy="16" r="9.6" fill="none" stroke="#45d6ec" stroke-width="1.2"/>
+        <circle cx="17" cy="16" r="5" fill="#0a1018"/>
+      </svg>
+      <h1>MRISafe <span>Twin</span></h1>
+    </div>
+    <nav class="tabs" aria-label="Modules">
+      <a href="./index.html">Home</a>
+      <a href="./trainer.html">Safety trainer</a>
+      <a href="./internals.html" aria-current="page">Inside the scanner</a>
+    </nav>
+    <div class="spacer"></div>
+    <button class="btn small" type="button" data-theme-toggle aria-pressed="false">Light</button>
+    <span class="chip mono" id="b0-chip" title="Main field used in the calculations">B0 1.5 T · 63.87 MHz</span>
+  </header>
+
+  <main class="grid">
+    <section class="panel rail" aria-label="Chapters">
+      <div class="panel-h"><span class="eyebrow">Chapters</span><span class="eyebrow"><span class="kbd">←</span> <span class="kbd">→</span></span></div>
+      <ol class="chapters scroll" id="chapters"></ol>
+      <div class="rail-foot">
+        <div class="range"><label for="peel">Peel layers <b id="peel-v">0</b></label><input id="peel" type="range" min="0" max="8" step="0.05" value="0"></div>
+        <div class="range"><label for="explode">Explode <b id="explode-v">0%</b></label><input id="explode" type="range" min="0" max="1" step="0.01" value="0"></div>
+        <div class="toggles">
+          <button class="btn small" id="t-labels" type="button" aria-pressed="true">Labels</button>
+          <button class="btn small" id="t-patient" type="button" aria-pressed="true">Patient</button>
+          <button class="btn small" id="t-reset" type="button">Reset view</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="stage" id="stage" aria-label="3D cutaway of the scanner">
+      <canvas id="scene" aria-label="Interactive 3D cutaway of an MRI scanner. Drag to orbit, scroll to zoom."></canvas>
+      <div id="labels"></div>
+      <div class="loading" id="loading"><div><div class="ring"></div>WINDING THE MAGNET</div></div>
+      <div class="hud-title"><div class="eyebrow" id="hud-eyebrow">Construction · 1</div><h2 id="hud-title">The whole system</h2></div>
+      <div class="vp-tools"><button class="btn small" id="t-rotate" type="button" aria-pressed="false">Auto-rotate</button></div>
+      <div class="readouts" id="readouts"></div>
+      <div class="stamp">SCHEMATIC CUTAWAY · NOT TO SCALE · QUARTER REMOVED</div>
+      <div class="stepbar">
+        <button class="btn small" id="prev" type="button">← Prev</button>
+        <div class="dots" id="dots" aria-hidden="true"></div>
+        <button class="btn small primary" id="next" type="button">Next →</button>
+      </div>
+    </section>
+
+    <section class="panel content" aria-label="Explanation">
+      <div class="scroll" id="content" style="flex:1;min-height:0" aria-live="polite"></div>
+    </section>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script>
+/*
+ * MRISafe Twin — MRI physics helpers for the "Inside the Scanner" module
+ * ------------------------------------------------------------------
+ * Pure JavaScript, no DOM. Browser: window.MRIPhysics. Node: require().
+ *
+ * These are TEACHING models:
+ *  - Larmor frequency and slice-selection relations are exact textbook formulas.
+ *  - Relaxation uses the Bloch equations without diffusion, flow or B0 errors.
+ *  - Image contrast uses the simplified spin-echo signal equation.
+ *  - The "image" is a synthetic head phantom passed through a real 2D FFT,
+ *    not a reconstruction of acquired data.
+ */
+(function (root, factory) {
+  const api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.MRIPhysics = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+
+  // Gyromagnetic ratio of hydrogen-1, divided by 2π (MHz per tesla)
+  const GAMMA_BAR_MHZ_PER_T = 42.577478;
+
+  /** Larmor frequency in MHz for field B0 in tesla. */
+  function larmorMHz(B0) { return GAMMA_BAR_MHZ_PER_T * B0; }
+
+  /**
+   * Slice thickness in mm from RF bandwidth (kHz) and gradient strength (mT/m).
+   * Δz = BW / (γ̄ · G)
+   */
+  function sliceThicknessMm(bwKHz, gradMTperM) {
+    const hzPerM = GAMMA_BAR_MHZ_PER_T * 1e6 * (gradMTperM / 1000);
+    if (hzPerM <= 0) return Infinity;
+    return (bwKHz * 1000 / hzPerM) * 1000;
+  }
+
+  /** Slice centre offset in mm for an RF frequency offset (kHz) under gradient G (mT/m). */
+  function sliceOffsetMm(offsetKHz, gradMTperM) {
+    const hzPerM = GAMMA_BAR_MHZ_PER_T * 1e6 * (gradMTperM / 1000);
+    if (hzPerM <= 0) return 0;
+    return (offsetKHz * 1000 / hzPerM) * 1000;
+  }
+
+  /** Frequency shift (kHz) at position z (m) from isocentre under gradient G (mT/m). */
+  function frequencyShiftKHz(zM, gradMTperM) {
+    return GAMMA_BAR_MHZ_PER_T * 1e6 * (gradMTperM / 1000) * zM / 1000;
+  }
+
+  /*
+   * Tissue parameters — APPROXIMATE values at 1.5 T for teaching.
+   * Published T1/T2 values vary with field strength, method and source.
+   * pd = relative proton density.
+   */
+  const TISSUES = {
+    wm:   { name: 'White matter',          pd: 0.69, t1: 790,  t2: 92 },
+    gm:   { name: 'Grey matter',           pd: 0.78, t1: 1100, t2: 100 },
+    csf:  { name: 'Cerebrospinal fluid',   pd: 1.00, t1: 4000, t2: 2000 },
+    fat:  { name: 'Fat',                   pd: 0.90, t1: 260,  t2: 85 },
+    bone: { name: 'Cortical bone',         pd: 0.05, t1: 500,  t2: 1 },
+  };
+
+  /** Simplified spin-echo signal: S = PD · (1 − e^(−TR/T1)) · e^(−TE/T2). */
+  function signalSE(tissue, TR, TE) {
+    const t = typeof tissue === 'string' ? TISSUES[tissue] : tissue;
+    return t.pd * (1 - Math.exp(-TR / t.t1)) * Math.exp(-TE / t.t2);
+  }
+
+  const PRESETS = {
+    T1: { name: 'T1-weighted', TR: 500, TE: 15, note: 'Short TR, short TE: tissues with short T1 (fat, white matter) are bright; fluid is dark.' },
+    T2: { name: 'T2-weighted', TR: 4000, TE: 100, note: 'Long TR, long TE: tissues with long T2 (fluid) are bright.' },
+    PD: { name: 'Proton-density', TR: 3000, TE: 15, note: 'Long TR, short TE: contrast mainly reflects how many protons are present.' },
+  };
+
+  /**
+   * Magnetisation after a flip of `flipDeg` from equilibrium M0 = 1, then free relaxation for tMs.
+   * Returns { mz, mxy }.
+   */
+  function relax(tMs, tissue, flipDeg) {
+    const t = typeof tissue === 'string' ? TISSUES[tissue] : tissue;
+    const a = flipDeg * Math.PI / 180;
+    const mz0 = Math.cos(a), mxy0 = Math.abs(Math.sin(a));
+    return {
+      mz: 1 - (1 - mz0) * Math.exp(-tMs / t.t1),
+      mxy: mxy0 * Math.exp(-tMs / t.t2),
+    };
+  }
+
+  /* ---------------- synthetic head phantom ---------------- */
+  // Each label value maps to a tissue key; 0 = air.
+  const LABELS = ['air', 'fat', 'bone', 'csf', 'gm', 'wm'];
+
+  function inEllipse(x, y, cx, cy, a, b) { const dx = (x - cx) / a, dy = (y - cy) / b; return dx * dx + dy * dy <= 1; }
+
+  /** Returns Uint8Array(N*N) of label indices (see LABELS). */
+  function headPhantom(N) {
+    const lab = new Uint8Array(N * N);
+    for (let j = 0; j < N; j++) {
+      for (let i = 0; i < N; i++) {
+        const x = (i + 0.5) / N * 2 - 1, y = (j + 0.5) / N * 2 - 1;
+        let v = 0;
+        if (inEllipse(x, y, 0, 0, 0.74, 0.92)) v = 1;            // scalp fat
+        if (inEllipse(x, y, 0, 0, 0.69, 0.87)) v = 2;            // skull
+        if (inEllipse(x, y, 0, 0, 0.64, 0.82)) v = 3;            // CSF rim
+        if (inEllipse(x, y, 0, 0, 0.61, 0.79)) v = 4;            // grey matter
+        if (inEllipse(x, y, 0, 0.02, 0.50, 0.67)) v = 5;         // white matter
+        // gyri: grey matter fingers into white matter
+        for (let k = 0; k < 14; k++) {
+          const ang = (k / 14) * Math.PI * 2;
+          if (inEllipse(x, y, Math.cos(ang) * 0.47, 0.02 + Math.sin(ang) * 0.63, 0.06, 0.06)) v = 4;
+        }
+        // ventricles
+        if (inEllipse(x, y, -0.13, -0.05, 0.07, 0.24) || inEllipse(x, y, 0.13, -0.05, 0.07, 0.24)) v = 3;
+        if (inEllipse(x, y, 0, 0.32, 0.05, 0.05)) v = 3;
+        lab[j * N + i] = v;
+      }
+    }
+    return lab;
+  }
+
+  /** Image intensities (Float64Array) for a label map under TR/TE. */
+  function phantomImage(labels, TR, TE) {
+    const out = new Float64Array(labels.length);
+    const s = { 0: 0 };
+    for (let k = 1; k < LABELS.length; k++) s[k] = signalSE(LABELS[k], TR, TE);
+    for (let p = 0; p < labels.length; p++) out[p] = s[labels[p]];
+    return out;
+  }
+
+  /* ---------------- FFT ---------------- */
+  /** In-place radix-2 complex FFT. n must be a power of two. inverse=true includes 1/n scaling. */
+  function fft1d(re, im, inverse) {
+    const n = re.length;
+    if (n & (n - 1)) throw new Error('FFT length must be a power of two');
+    for (let i = 1, j = 0; i < n; i++) {
+      let bit = n >> 1;
+      for (; j & bit; bit >>= 1) j ^= bit;
+      j ^= bit;
+      if (i < j) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; }
+    }
+    for (let len = 2; len <= n; len <<= 1) {
+      const ang = (inverse ? 2 : -2) * Math.PI / len;
+      const wr = Math.cos(ang), wi = Math.sin(ang);
+      for (let i = 0; i < n; i += len) {
+        let cr = 1, ci = 0;
+        for (let k = 0; k < len / 2; k++) {
+          const a = i + k, b = a + len / 2;
+          const xr = re[b] * cr - im[b] * ci, xi = re[b] * ci + im[b] * cr;
+          re[b] = re[a] - xr; im[b] = im[a] - xi;
+          re[a] += xr; im[a] += xi;
+          const nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr;
+        }
+      }
+    }
+    if (inverse) for (let i = 0; i < n; i++) { re[i] /= n; im[i] /= n; }
+  }
+
+  /** 2D FFT on N×N row-major arrays, in place. */
+  function fft2d(re, im, N, inverse) {
+    const r = new Float64Array(N), c = new Float64Array(N);
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < N; x++) { r[x] = re[y * N + x]; c[x] = im[y * N + x]; }
+      fft1d(r, c, inverse);
+      for (let x = 0; x < N; x++) { re[y * N + x] = r[x]; im[y * N + x] = c[x]; }
+    }
+    for (let x = 0; x < N; x++) {
+      for (let y = 0; y < N; y++) { r[y] = re[y * N + x]; c[y] = im[y * N + x]; }
+      fft1d(r, c, inverse);
+      for (let y = 0; y < N; y++) { re[y * N + x] = r[y]; im[y * N + x] = c[y]; }
+    }
+  }
+
+  /** Swap quadrants so the k-space centre is in the middle of the array. */
+  function fftshift(a, N) {
+    const out = new a.constructor(a.length), h = N >> 1;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) out[((y + h) % N) * N + ((x + h) % N)] = a[y * N + x];
+    return out;
+  }
+
+  /**
+   * Reconstruct from a subset of k-space rows (phase-encode lines).
+   * kRe/kIm are UNSHIFTED k-space; mask(rowShifted) → boolean where rowShifted 0..N-1 has DC at N/2.
+   * Returns magnitude image.
+   */
+  function reconstruct(kRe, kIm, N, mask) {
+    const re = new Float64Array(N * N), im = new Float64Array(N * N), h = N >> 1;
+    for (let y = 0; y < N; y++) {
+      const shifted = (y + h) % N;
+      if (!mask(shifted)) continue;
+      for (let x = 0; x < N; x++) { re[y * N + x] = kRe[y * N + x]; im[y * N + x] = kIm[y * N + x]; }
+    }
+    fft2d(re, im, N, true);
+    const mag = new Float64Array(N * N);
+    for (let p = 0; p < N * N; p++) mag[p] = Math.hypot(re[p], im[p]);
+    return mag;
+  }
+
+  return {
+    GAMMA_BAR_MHZ_PER_T, larmorMHz, sliceThicknessMm, sliceOffsetMm, frequencyShiftKHz,
+    TISSUES, PRESETS, signalSE, relax, LABELS, headPhantom, phantomImage,
+    fft1d, fft2d, fftshift, reconstruct,
+  };
+});
+
+</script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.min.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+
+const P = window.MRIPhysics;
+const gsap = window.gsap;
+gsap.ticker.lagSmoothing(0);
+const RM = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const D = s => (RM ? 0 : s);
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const fmt = (v, d = 2) => Number(v).toFixed(d);
+
+const S = { B0: 1.5, labels: true, patient: true, autoRotate: false, chapter: 0 };
+const EMBED = document.documentElement.classList.contains('embed');
+function post(kind, data = {}) { if (EMBED && window.parent !== window) window.parent.postMessage({ mrisafe: 1, kind, ...data }, location.origin); }
+
+/* =====================================================================
+ * RENDERER / SCENE
+ * =================================================================== */
+const canvas = $('#scene');
+const stage = $('#stage');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+let pixelRatioCap = 1.75;
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, pixelRatioCap));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.localClippingEnabled = true;
+const labelRenderer = new CSS2DRenderer({ element: $('#labels') });
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#070c14');
+scene.fog = new THREE.Fog('#070c14', 18, 40);
+/* scene colours follow the theme (dark or light) */
+function applySceneTheme() {
+  const c = new THREE.Color(getComputedStyle(document.documentElement).getPropertyValue('--scene-bg').trim() || '#070c14');
+  scene.background = c;
+  scene.fog = new THREE.Fog(c, 18, 40);
+}
+applySceneTheme();
+window.addEventListener('mrisafe-theme', applySceneTheme);
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+
+const camera = new THREE.PerspectiveCamera(36, 1, 0.02, 120);
+camera.position.set(9, 7, 11);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 0.35;
+controls.maxDistance = 22;
+controls.screenSpacePanning = true;
+
+scene.add(new THREE.HemisphereLight('#c4dcff', '#0a1018', 0.6));
+const key = new THREE.DirectionalLight('#ffffff', 1.6);
+key.position.set(5, 8, 6);
+key.castShadow = true;
+key.shadow.mapSize.set(1536, 1536);
+Object.assign(key.shadow.camera, { left: -8, right: 8, top: 8, bottom: -8, near: 1, far: 30 });
+key.shadow.bias = -0.0004; key.shadow.normalBias = 0.02;
+scene.add(key);
+const rim = new THREE.DirectionalLight('#7fb7ff', 0.5);
+rim.position.set(-6, 3, -5);
+scene.add(rim);
+const boreLight = new THREE.PointLight('#bff3ff', 0.5, 2.2, 2);
+scene.add(boreLight);
+
+const FLOOR_Y = -1.32;
+
+function mesh(geo, mat, o = {}) {
+  const m = new THREE.Mesh(geo, mat);
+  m.castShadow = o.cast !== false; m.receiveShadow = o.receive !== false;
+  if (o.pos) m.position.set(...o.pos);
+  if (o.rot) m.rotation.set(...o.rot);
+  return m;
+}
+const rbox = (w, h, d, r = 0.03, seg = 3) => new RoundedBoxGeometry(w, h, d, seg, Math.min(r, w * 0.49, h * 0.49, d * 0.49));
+function canvasTexture(w, h, draw) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  return t;
+}
+function label(text, cls = '', sub = '') {
+  const el = document.createElement('div');
+  el.className = 'tag3d ' + cls;
+  el.innerHTML = `<span>${esc(text)}</span>${sub ? `<span class="t">${esc(sub)}</span>` : ''}`;
+  return new CSS2DObject(el);
+}
+
+/* Materials */
+const MAT = {
+  cover: () => new THREE.MeshPhysicalMaterial({ color: '#eef2f6', roughness: 0.32, clearcoat: 0.6, clearcoatRoughness: 0.2, side: THREE.DoubleSide }),
+  steel: c => new THREE.MeshStandardMaterial({ color: c || '#a7b2bd', roughness: 0.32, metalness: 0.85, side: THREE.DoubleSide }),
+  alu: () => new THREE.MeshStandardMaterial({ color: '#d7dde3', roughness: 0.38, metalness: 0.75, side: THREE.DoubleSide }),
+  coil: () => new THREE.MeshStandardMaterial({ map: windingTex, color: '#ffffff', roughness: 0.42, metalness: 0.65, side: THREE.DoubleSide }),
+  cut: c => new THREE.MeshStandardMaterial({ map: hatchTex, color: c || '#ffffff', roughness: 0.7, metalness: 0.1, side: THREE.DoubleSide }),
+  glow: c => new THREE.MeshBasicMaterial({ color: c, toneMapped: false }),
+  plastic: c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.55 }),
+  glass: (c, o) => new THREE.MeshPhysicalMaterial({ color: c, roughness: 0.1, transparent: true, opacity: o, depthWrite: false, side: THREE.DoubleSide }),
+};
+const windingTex = canvasTexture(256, 64, (ctx, w, h) => {
+  const g = ctx.createLinearGradient(0, 0, 0, h); g.addColorStop(0, '#b4683c'); g.addColorStop(0.5, '#e09564'); g.addColorStop(1, '#a35a30');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = 'rgba(60,25,10,0.45)'; ctx.lineWidth = 1.2;
+  for (let x = 0; x < w; x += 4) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
+});
+windingTex.wrapS = windingTex.wrapT = THREE.RepeatWrapping; windingTex.repeat.set(12, 1);
+const hatchTex = canvasTexture(128, 128, (ctx, w, h) => {
+  ctx.fillStyle = '#c9d2db'; ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = 'rgba(40,55,70,0.35)'; ctx.lineWidth = 3;
+  for (let i = -h; i < w; i += 14) { ctx.beginPath(); ctx.moveTo(i, h); ctx.lineTo(i + h, 0); ctx.stroke(); }
+});
+hatchTex.wrapS = hatchTex.wrapT = THREE.RepeatWrapping; hatchTex.repeat.set(2, 2);
+
+/* =====================================================================
+ * CUTAWAY GEOMETRY HELPERS
+ * The bore axis is world Z. A quarter (x>0, y>0) is removed so the nested
+ * layers are visible from the default viewpoint.
+ * =================================================================== */
+const TH0 = Math.PI, THL = Math.PI * 1.5;  // cylinder theta range (after rotateX)
+const PH0 = Math.PI / 2, PHL = Math.PI * 1.5; // ring phi range
+function tube(r, len, mat, seg = 96) {
+  const g = new THREE.CylinderGeometry(r, r, len, seg, 1, true, TH0, THL); g.rotateX(Math.PI / 2);
+  return mesh(g, mat);
+}
+function ring(rIn, rOut, z, mat, seg = 96) {
+  const m = mesh(new THREE.RingGeometry(rIn, rOut, seg, 1, PH0, PHL), mat);
+  m.position.z = z; return m;
+}
+function cutFaces(rIn, rOut, len, mat) {
+  const g = new THREE.Group();
+  const a = mesh(new THREE.PlaneGeometry(len, rOut - rIn), mat); a.rotation.y = Math.PI / 2; a.position.set(0, (rIn + rOut) / 2, 0);
+  const b = mesh(new THREE.PlaneGeometry(rOut - rIn, len), mat); b.rotation.x = -Math.PI / 2; b.position.set((rIn + rOut) / 2, 0, 0);
+  g.add(a, b); return g;
+}
+/* Solid annulus (e.g. a coil): outer + inner surface, end faces, hatched cut faces. */
+function solid(rIn, rOut, len, mat, cutMat) {
+  const g = new THREE.Group();
+  g.add(tube(rOut, len, mat), tube(rIn, len, mat), ring(rIn, rOut, len / 2, mat), ring(rIn, rOut, -len / 2, mat));
+  g.add(cutFaces(rIn, rOut, len, cutMat || mat));
+  return g;
+}
+/* Hollow vessel with wall thickness t (e.g. cryostat). */
+function vessel(rIn, rOut, len, t, mat, cutMat) {
+  const g = new THREE.Group();
+  g.add(solid(rOut - t, rOut, len, mat, cutMat));
+  g.add(solid(rIn, rIn + t, len, mat, cutMat));
+  const endA = solid(rIn, rOut, t, mat, cutMat); endA.position.z = len / 2 - t / 2;
+  const endB = solid(rIn, rOut, t, mat, cutMat); endB.position.z = -len / 2 + t / 2;
+  g.add(endA, endB);
+  return g;
+}
+
+/* =====================================================================
+ * SCANNER LAYERS (outer → inner)
+ * =================================================================== */
+const layers = [];
+const scanner = new THREE.Group();
+scene.add(scanner);
+
+function addLayer(id, name, sub, group, labelPos) {
+  const tag = label(name, '', sub);
+  tag.position.copy(labelPos);
+  group.add(tag);
+  group.traverse(o => {
+    if (o.isMesh) {
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of mats) { m.userData.base = m.opacity; m.userData.baseTransparent = m.transparent; m.userData.baseDepthWrite = m.depthWrite; }
+    }
+  });
+  const L = { id, name, sub, group, tag, z: 0, v: 1, focus: false, index: layers.length };
+  layers.push(L);
+  scanner.add(group);
+  return L;
+}
+
+function buildScanner() {
+  // 0 — Cover / shroud
+  {
+    const g = new THREE.Group();
+    const m = MAT.cover();
+    g.add(tube(1.22, 2.0, m), ring(0.37, 1.22, 1.0, m), ring(0.37, 1.22, -1.0, m), tube(0.37, 0.06, m));
+    const flare = mesh(new THREE.TorusGeometry(0.375, 0.03, 12, 96, PHL), m); flare.rotation.z = PH0; flare.position.z = 1.0;
+    g.add(flare);
+    addLayer('cover', 'Covers', 'plastic shroud', g, new THREE.Vector3(-0.9, 0.95, 0.9));
+  }
+  // 1 — Outer vacuum vessel + services turret + quench pipe
+  {
+    const g = new THREE.Group();
+    const m = MAT.steel('#a5b0bb');
+    g.add(vessel(0.56, 1.12, 1.8, 0.018, m, MAT.cut('#b9c3cd')));
+    // cold head turret (on top, toward the back)
+    const tur = new THREE.Group(); tur.position.set(0, 1.12, -0.42);
+    tur.add(mesh(new THREE.CylinderGeometry(0.15, 0.17, 0.12, 32), MAT.steel('#8f9ba7'), { pos: [0, 0.06, 0] }));
+    tur.add(mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.34, 32), MAT.steel('#c5ccd3'), { pos: [0, 0.29, 0] }));
+    tur.add(mesh(rbox(0.26, 0.16, 0.22, 0.03), MAT.plastic('#3b4c60'), { pos: [0, 0.54, 0] }));
+    for (const sx of [-1, 1]) {
+      const curve = new THREE.CatmullRomCurve3([new THREE.Vector3(sx * 0.07, 0.56, -0.08), new THREE.Vector3(sx * 0.1, 0.62, -0.5), new THREE.Vector3(sx * 0.12, 0.3, -1.1), new THREE.Vector3(sx * 0.12, -0.2, -1.3)]);
+      tur.add(mesh(new THREE.TubeGeometry(curve, 32, 0.022, 10), MAT.plastic('#1d2733')));
+    }
+    g.add(tur);
+    // quench vent pipe
+    const qp = new THREE.Group(); qp.position.set(0, 1.12, 0.32);
+    const qc = new THREE.CatmullRomCurve3([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0.9, 0), new THREE.Vector3(0, 1.45, -0.2), new THREE.Vector3(0, 1.62, -0.9), new THREE.Vector3(0, 1.65, -2.4)]);
+    qp.add(mesh(new THREE.TubeGeometry(qc, 64, 0.06, 16), MAT.steel('#c9b08a')));
+    g.add(qp);
+    const L = addLayer('ovc', 'Outer vacuum vessel', 'stainless steel · 300 K', g, new THREE.Vector3(-1.0, -0.6, 0.95));
+    L.extra = { turret: tur, quench: qp };
+    const tTag = label('Cold head', '', 'cryocooler'); tTag.position.set(0, 1.85, -0.42); g.add(tTag); L.extraTags = [tTag];
+    const qTag = label('Quench pipe', '', 'helium vent'); qTag.position.set(0, 2.55, 0.25); g.add(qTag); L.extraTags.push(qTag);
+  }
+  // 2 — Thermal radiation shield
+  {
+    const g = new THREE.Group();
+    g.add(vessel(0.6, 1.07, 1.7, 0.01, MAT.alu(), MAT.cut('#dfe5ea')));
+    addLayer('shield', 'Thermal shield', '≈ 40–50 K', g, new THREE.Vector3(-0.95, 0.2, 0.86));
+  }
+  // 3 — Helium vessel + liquid helium
+  {
+    const g = new THREE.Group();
+    g.add(vessel(0.64, 1.02, 1.6, 0.014, MAT.steel('#8d99a6'), MAT.cut('#a9b4bf')));
+    const lhe = new THREE.Group();
+    const lm = MAT.glass('#6fd3ff', 0.16);
+    lhe.add(tube(1.0, 1.57, lm), tube(0.66, 1.57, lm), ring(0.66, 1.0, 0.785, lm), ring(0.66, 1.0, -0.785, lm));
+    g.add(lhe);
+    addLayer('hevessel', 'Helium vessel', 'liquid He · 4.2 K', g, new THREE.Vector3(-0.85, 0.62, 0.8));
+  }
+  // 4 — Superconducting coils (main + active shield)
+  {
+    const g = new THREE.Group();
+    const main = [[-0.62, 0.15], [-0.36, 0.1], [-0.12, 0.08], [0.12, 0.08], [0.36, 0.1], [0.62, 0.15]];
+    const coilMats = [];
+    for (const [z, w] of main) { const cm = MAT.coil(); coilMats.push(cm); const c = solid(0.7, 0.79, w, cm, MAT.cut('#e8a273')); c.position.z = z; g.add(c); }
+    const shieldMats = [];
+    for (const z of [-0.6, 0.6]) { const sm = MAT.coil(); sm.color.set('#d8c0ff'); shieldMats.push(sm); const c = solid(0.9, 0.97, 0.14, sm, MAT.cut('#cdb6f5')); c.position.z = z; g.add(c); }
+    // former (support)
+    g.add(solid(0.675, 0.7, 1.48, MAT.steel('#6d7884'), MAT.cut('#8a96a2')));
+    const L = addLayer('coils', 'Superconducting coils', 'NbTi wire', g, new THREE.Vector3(-0.78, -0.22, 0.6));
+    L.coilMats = coilMats; L.shieldMats = shieldMats;
+    const sTag = label('Active shield coils', '', 'opposite current'); sTag.position.set(-0.98, 0.42, -0.6); g.add(sTag); L.extraTags = [sTag];
+  }
+  // 5 — Passive shim trays
+  {
+    const g = new THREE.Group();
+    const n = 16;
+    for (let i = 0; i < n; i++) {
+      const phi = (i / n) * Math.PI * 2 + Math.PI / n;
+      if (phi > 0 && phi < Math.PI / 2) continue;
+      const tray = new THREE.Group();
+      tray.add(mesh(new THREE.BoxGeometry(0.05, 0.012, 1.5), MAT.plastic('#c8b78f')));
+      for (let k = 0; k < 9; k++) if ((i * 7 + k * 3) % 4 !== 0) tray.add(mesh(new THREE.BoxGeometry(0.035, 0.016, 0.06), MAT.steel('#5a6470'), { pos: [0, 0.006, -0.64 + k * 0.16] }));
+      tray.position.set(Math.cos(phi) * 0.535, Math.sin(phi) * 0.535, 0);
+      tray.rotation.z = phi - Math.PI / 2;
+      g.add(tray);
+    }
+    addLayer('shims', 'Passive shim trays', 'iron pieces', g, new THREE.Vector3(-0.5, -0.38, 0.78));
+  }
+  // 6 — Gradient coil (X, Y, Z windings in resin)
+  {
+    const g = new THREE.Group();
+    g.add(solid(0.43, 0.505, 1.5, MAT.glass('#6d8f83', 0.42), MAT.cut('#7f9d92')));
+    const wires = { x: [], y: [], z: [] };
+    const wireMat = c => new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0.15, roughness: 0.4, metalness: 0.5 });
+    const R = 0.47;
+    // Z: Maxwell-type pairs (opposite current in each half)
+    for (const z of [-0.62, -0.5, 0.5, 0.62]) {
+      const m = wireMat('#5aa8ff'); wires.z.push(m);
+      const t = mesh(new THREE.TorusGeometry(R, 0.008, 8, 128), m); t.position.z = z; g.add(t);
+    }
+    // X and Y: saddle loops (four per axis), simplified fingerprint
+    const saddle = (phiC, z1, z2, span) => {
+      const pts = [];
+      const arc = (z, a0, a1) => { for (let k = 0; k <= 24; k++) { const a = a0 + (a1 - a0) * k / 24; pts.push(new THREE.Vector3(Math.cos(a) * R, Math.sin(a) * R, z)); } };
+      arc(z1, phiC - span, phiC + span); arc(z2, phiC + span, phiC - span); pts.push(pts[0].clone());
+      return new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.02);
+    };
+    for (const [axis, color, base] of [['x', '#ff6b6b', 0], ['y', '#5ee08a', Math.PI / 2]]) {
+      for (const side of [0, Math.PI]) for (const [z1, z2] of [[0.06, 0.55], [-0.06, -0.55]]) {
+        for (const shrink of [0, 0.12]) {
+          const m = wireMat(color); wires[axis].push(m);
+          const c = saddle(base + side, z1 + Math.sign(z1) * shrink * 0.5, z2 - Math.sign(z2) * shrink, 0.95 - shrink * 2);
+          g.add(mesh(new THREE.TubeGeometry(c, 160, 0.006, 6, true), m));
+        }
+      }
+    }
+    const L = addLayer('gradient', 'Gradient coils', 'X · Y · Z, water-cooled', g, new THREE.Vector3(-0.6, 0.32, 0.72));
+    L.wires = wires;
+  }
+  // 7 — RF body coil (birdcage)
+  {
+    const g = new THREE.Group();
+    const rings = MAT.glow('#e8a273');
+    const rungs = [];
+    for (const z of [-0.4, 0.4]) { const t = mesh(new THREE.TorusGeometry(0.4, 0.012, 8, 128), MAT.steel('#d08a5a')); t.position.z = z; g.add(t); }
+    for (let i = 0; i < 16; i++) {
+      const phi = (i / 16) * Math.PI * 2;
+      const m = new THREE.MeshStandardMaterial({ color: '#d08a5a', emissive: '#ffb27a', emissiveIntensity: 0, metalness: 0.7, roughness: 0.3 });
+      rungs.push({ m, phi });
+      g.add(mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.8, 8), m, { pos: [Math.cos(phi) * 0.4, Math.sin(phi) * 0.4, 0], rot: [Math.PI / 2, 0, 0] }));
+    }
+    void rings;
+    const L = addLayer('rf', 'RF body coil', 'birdcage · transmit', g, new THREE.Vector3(-0.32, 0.36, 0.42));
+    L.rungs = rungs;
+  }
+  // 8 — Bore liner
+  {
+    const g = new THREE.Group();
+    g.add(tube(0.36, 2.0, MAT.glass('#eef3f8', 0.35)));
+    addLayer('liner', 'Bore liner', 'patient space', g, new THREE.Vector3(-0.22, -0.3, 1.05));
+  }
+  // Floor & plinth
+  const floor = mesh(new THREE.PlaneGeometry(40, 40), new THREE.MeshStandardMaterial({ color: '#0b1521', roughness: 0.9 }), { cast: false });
+  floor.rotation.x = -Math.PI / 2; floor.position.y = FLOOR_Y; scene.add(floor);
+  const grid = new THREE.GridHelper(40, 80, '#1b2c40', '#122030'); grid.position.y = FLOOR_Y + 0.002; scene.add(grid);
+  scene.add(mesh(rbox(1.6, 0.2, 1.6, 0.04), MAT.plastic('#1e2a37'), { pos: [0, FLOOR_Y + 0.1, 0] }));
+}
+
+/* ---------- table, patient, head receive coil ---------- */
+const patient = new THREE.Group();
+const headCoil = new THREE.Group();
+let headCoilMats = [];
+function buildPatient() {
+  const tableTop = mesh(rbox(0.44, 0.05, 2.7, 0.02), MAT.plastic('#e7ecf1'), { pos: [0, -0.27, 1.05] });
+  const ped = mesh(rbox(0.5, FLOOR_Y * -1 - 0.32, 0.9, 0.06), MAT.plastic('#dfe5eb'), { pos: [0, (FLOOR_Y - 0.3) / 2, 2.0] });
+  patient.add(tableTop, ped);
+  const gown = MAT.plastic('#79a9cc'), skin = MAT.plastic('#c8987a');
+  const y0 = -0.245;
+  patient.add(mesh(new THREE.SphereGeometry(0.095, 32, 24), skin, { pos: [0, y0 + 0.11, -0.02] }));
+  patient.add(mesh(new THREE.CapsuleGeometry(0.14, 0.46, 8, 24), gown, { pos: [0, y0 + 0.13, 0.46], rot: [Math.PI / 2, 0, 0] }));
+  for (const sx of [-1, 1]) patient.add(mesh(new THREE.CapsuleGeometry(0.045, 0.42, 6, 16), gown, { pos: [sx * 0.2, y0 + 0.08, 0.53], rot: [Math.PI / 2, 0, 0] }));
+  patient.add(mesh(rbox(0.34, 0.12, 0.95, 0.05), MAT.plastic('#9cc0de'), { pos: [0, y0 + 0.07, 1.25] }));
+  // Head receive coil (phased array cage)
+  headCoilMats = [];
+  for (let k = 0; k < 4; k++) {
+    const m = new THREE.MeshStandardMaterial({ color: '#e9eef3', emissive: '#45d6ec', emissiveIntensity: 0, roughness: 0.5 });
+    headCoilMats.push(m);
+    const arch = mesh(new THREE.TorusGeometry(0.15, 0.012, 8, 32, Math.PI), m, { pos: [0, y0 + 0.07, -0.12 + k * 0.08] });
+    headCoil.add(arch);
+  }
+  headCoil.add(mesh(new THREE.BoxGeometry(0.02, 0.02, 0.28), MAT.plastic('#e9eef3'), { pos: [0, y0 + 0.22, 0.0] }));
+  const hTag = label('Head receive coil', '', 'phased array'); hTag.position.set(0, y0 + 0.3, -0.05); headCoil.add(hTag); headCoil.userData.tag = hTag;
+  patient.add(headCoil);
+  scene.add(patient);
+}
+
+/* ---------- equipment room and Faraday cage (overview) ---------- */
+const equipment = new THREE.Group();
+function buildEquipment() {
+  const cageMat = new THREE.MeshPhysicalMaterial({ color: '#c98a5a', transparent: true, opacity: 0.1, roughness: 0.3, metalness: 0.6, side: THREE.DoubleSide, depthWrite: false });
+  const meshTex = canvasTexture(128, 128, (ctx, w, h) => { ctx.clearRect(0, 0, w, h); ctx.strokeStyle = 'rgba(230,160,110,0.35)'; ctx.lineWidth = 1; for (let i = 0; i < w; i += 8) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, h); ctx.stroke(); ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(w, i); ctx.stroke(); } });
+  meshTex.wrapS = meshTex.wrapT = THREE.RepeatWrapping; meshTex.repeat.set(8, 3);
+  const H = 3.0;
+  const wall = (w, pos, rotY) => {
+    const g = new THREE.Group();
+    g.add(mesh(new THREE.PlaneGeometry(w, H), cageMat, { cast: false }));
+    g.add(mesh(new THREE.PlaneGeometry(w, H), new THREE.MeshBasicMaterial({ map: meshTex, transparent: true, depthWrite: false, side: THREE.DoubleSide }), { cast: false }));
+    g.position.set(pos[0], FLOOR_Y + H / 2, pos[2]); g.rotation.y = rotY; equipment.add(g); return g;
+  };
+  wall(7, [0, 0, -3.2], 0);            // back
+  wall(6.4, [-3.2, 0, 0], Math.PI / 2); // left (to equipment room)
+  const t = label('RF shielded room (Faraday cage)', 'plain'); t.position.set(-1.0, FLOOR_Y + H + 0.15, -3.2); equipment.add(t);
+  // Penetration panel on the left wall
+  equipment.add(mesh(rbox(0.06, 0.7, 0.9, 0.02), MAT.steel('#b88a63'), { pos: [-3.18, FLOOR_Y + 0.9, -1.6] }));
+  const pp = label('Penetration panel', '', 'filtered feed-throughs'); pp.position.set(-3.18, FLOOR_Y + 1.45, -1.6); equipment.add(pp);
+  // Cabinets
+  const cabs = [
+    ['Gradient amplifiers', 'X · Y · Z power', -5.0, -2.4, '#2f4660', 1.9],
+    ['RF amplifier', 'pulsed transmit', -5.0, -1.3, '#35506d', 1.7],
+    ['Helium compressor', 'drives cold head', -5.0, -0.2, '#3b4a5c', 1.3],
+    ['Chiller', 'gradient & amp cooling', -5.0, 0.9, '#2b5262', 1.4],
+    ['Host & reconstruction', 'computers', -5.0, 2.0, '#2a3a50', 1.8],
+  ];
+  for (const [name, sub, x, z, col, h] of cabs) {
+    equipment.add(mesh(rbox(0.8, h, 0.7, 0.04), MAT.plastic(col), { pos: [x, FLOOR_Y + h / 2, z] }));
+    equipment.add(mesh(new THREE.PlaneGeometry(0.5, 0.06), MAT.glow('#45d6ec'), { cast: false, pos: [x + 0.405, FLOOR_Y + h - 0.2, z], rot: [0, Math.PI / 2, 0] }));
+    const l = label(name, '', sub); l.position.set(x, FLOOR_Y + h + 0.2, z); equipment.add(l);
+  }
+  // Cable trays from cabinets to the panel and to the magnet
+  const cableMat = MAT.plastic('#141c26');
+  for (const [z, dz] of [[-2.4, 0], [-1.3, 0.08], [-0.2, 0.16]]) {
+    const c = new THREE.CatmullRomCurve3([new THREE.Vector3(-4.6, FLOOR_Y + 0.15, z), new THREE.Vector3(-3.4, FLOOR_Y + 0.15, -1.6 + dz), new THREE.Vector3(-2.9, FLOOR_Y + 0.15, -1.6 + dz), new THREE.Vector3(-1.2, FLOOR_Y + 0.05, -0.6 + dz)]);
+    equipment.add(mesh(new THREE.TubeGeometry(c, 40, 0.035, 8), cableMat));
+  }
+  const d = label('Equipment room', 'plain'); d.position.set(-5.0, FLOOR_Y + 2.6, 0); equipment.add(d);
+  scene.add(equipment);
+}
+
+/* =====================================================================
+ * PHYSICS VISUALS
+ * =================================================================== */
+/* ---------- B0 field lines with flowing arrows ---------- */
+const field = new THREE.Group(); scene.add(field);
+const fieldSets = { unshielded: new THREE.Group(), shielded: new THREE.Group() };
+const fieldMats = [];
+function fadeField(k) { for (const [m, base] of fieldMats) m.opacity = base * k; }
+const flowArrows = { unshielded: [], shielded: [] };
+const coneGeo = new THREE.ConeGeometry(0.035, 0.1, 10); coneGeo.rotateX(Math.PI / 2);
+function polylineInfo(pts) { const cum = [0]; for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + pts[i].distanceTo(pts[i - 1])); return { pts, cum, len: cum[cum.length - 1] }; }
+function pointAt(info, u) {
+  const d = (u % 1) * info.len; let i = 1; while (i < info.cum.length - 1 && info.cum[i] < d) i++;
+  const a = info.pts[i - 1], b = info.pts[i], t = (d - info.cum[i - 1]) / Math.max(1e-6, info.cum[i] - info.cum[i - 1]);
+  return { p: a.clone().lerp(b, t), dir: b.clone().sub(a).normalize() };
+}
+function buildField() {
+  const lineMat = new THREE.LineBasicMaterial({ color: '#45d6ec', transparent: true, opacity: 0.55 });
+  const arrowMat = new THREE.MeshBasicMaterial({ color: '#9ff0ff', transparent: true, opacity: 1, toneMapped: false });
+  fieldMats.push([lineMat, 0.55], [arrowMat, 1]);
+  for (const key of ['unshielded', 'shielded']) {
+    const grp = fieldSets[key];
+    const polylines = [];
+    // inside the bore: straight lines along +z
+    for (const [r, n] of [[0, 1], [0.14, 6], [0.27, 8]]) for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2;
+      const pts = [new THREE.Vector3(Math.cos(a) * r, Math.sin(a) * r, -1.5), new THREE.Vector3(Math.cos(a) * r, Math.sin(a) * r, 1.5)];
+      polylines.push(pts);
+    }
+    // return flux outside (dipole-like loops r = L sin²θ, illustrative)
+    const Ls = key === 'unshielded' ? [2.4, 3.3, 4.6, 6.2] : [1.9, 2.25, 2.6];
+    const squash = key === 'unshielded' ? 1 : 0.8;
+    for (const L of Ls) for (let az = 0; az < 6; az++) {
+      const psi = (az / 6) * Math.PI * 2 + 0.3;
+      let seg = [];
+      for (let k = 0; k <= 120; k++) {
+        const th = 0.05 + (Math.PI - 0.1) * k / 120;
+        const r = L * Math.sin(th) ** 2, rho = r * Math.sin(th), z = r * Math.cos(th) * squash;
+        const p = new THREE.Vector3(Math.cos(psi) * rho, Math.sin(psi) * rho, z);
+        const inside = rho < 1.25 && Math.abs(z) < 1.05;
+        if (inside) { if (seg.length > 1) polylines.push(seg.slice().reverse()); seg = []; } else seg.push(p);
+      }
+      if (seg.length > 1) polylines.push(seg.slice().reverse());
+    }
+    for (const pts of polylines) {
+      grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), lineMat));
+      const info = polylineInfo(pts);
+      const count = Math.max(1, Math.round(info.len / 1.2));
+      for (let c = 0; c < count; c++) {
+        const m = new THREE.Mesh(coneGeo, arrowMat);
+        grp.add(m);
+        flowArrows[key].push({ m, info, u: c / count });
+      }
+    }
+    // 0.5 mT (5 gauss) footprint on the floor, illustrative
+    const [rx, rz] = key === 'unshielded' ? [5.2, 7.0] : [2.6, 4.0];
+    const e = new THREE.EllipseCurve(0, 0, rx, rz, 0, Math.PI * 2);
+    const pts = e.getPoints(128).map(p => new THREE.Vector3(p.x, FLOOR_Y + 0.01, p.y));
+    const ln = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineDashedMaterial({ color: '#f4b549', dashSize: 0.2, gapSize: 0.12 }));
+    ln.computeLineDistances(); grp.add(ln);
+    const t = label('0.5 mT (5 G) line · illustrative', 'plain'); t.element.style.color = '#f4b549'; t.position.set(0, FLOOR_Y + 0.05, rz); grp.add(t);
+    field.add(grp);
+  }
+  fieldSets.unshielded.visible = false;
+}
+
+/* ---------- spins (instanced arrows) and net magnetisation ---------- */
+const spinGroup = new THREE.Group(); scene.add(spinGroup);
+let spinMesh, spins = [];
+const arrowGeo = (() => {
+  const shaft = new THREE.CylinderGeometry(0.004, 0.004, 0.05, 6); shaft.translate(0, 0.025, 0);
+  const head = new THREE.ConeGeometry(0.011, 0.024, 8); head.translate(0, 0.062, 0);
+  const g = new THREE.BufferGeometry();
+  const merge = [shaft, head].map(x => x.toNonIndexed());
+  const pos = [], nor = [];
+  for (const m of merge) { pos.push(...m.attributes.position.array); nor.push(...m.attributes.normal.array); }
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  return g;
+})();
+function makeArrow(color, len = 1, radius = 1, headLen = 0.06) {
+  const g = new THREE.Group();
+  const m = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.35, roughness: 0.4 });
+  const shaft = mesh(new THREE.CylinderGeometry(0.008 * radius, 0.008 * radius, 1, 12), m, { cast: false }); shaft.position.y = 0.5;
+  const head = mesh(new THREE.ConeGeometry(0.022 * radius, headLen, 16), m, { cast: false });
+  g.add(shaft, head);
+  g.userData = { shaft, head, len, headLen };
+  setArrowLength(g, len);
+  return g;
+}
+function setArrowLength(a, len) {
+  const L = Math.max(0.0001, len);
+  const hl = a.userData.headLen;
+  a.userData.shaft.scale.y = Math.max(0.0001, L - hl); a.userData.shaft.position.y = (L - hl) / 2;
+  a.userData.head.position.y = L - hl / 2;
+  a.visible = len > 0.004;
+}
+const UP = new THREE.Vector3(0, 1, 0);
+function pointArrow(a, dir) { const d = dir.clone(); const L = d.length(); if (L < 1e-6) { a.visible = false; return; } a.quaternion.setFromUnitVectors(UP, d.divideScalar(L)); }
+
+let netArrow, b1Arrow, trail, trailPts = [];
+const tissueArrows = [];
+function buildSpins() {
+  const N = 140;
+  spinMesh = new THREE.InstancedMesh(arrowGeo, new THREE.MeshStandardMaterial({ color: '#ffd28a', emissive: '#ffb347', emissiveIntensity: 0.3, roughness: 0.5 }), N);
+  spinMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  spinGroup.add(spinMesh);
+  for (let i = 0; i < N; i++) {
+    let p; do { p = new THREE.Vector3(Math.random() * 2 - 1, Math.random() * 2 - 1, Math.random() * 2 - 1); } while (p.length() > 1);
+    p.multiplyScalar(0.24);
+    const rnd = new THREE.Vector3().randomDirection();
+    spins.push({ p, rnd, up: Math.random() < 0.57, phase: Math.random() * Math.PI * 2, wobble: Math.random() * Math.PI * 2 });
+  }
+  netArrow = makeArrow('#45d6ec', 0.3, 1.6); spinGroup.add(netArrow);
+  b1Arrow = makeArrow('#ff6b6b', 0.22, 1.2); spinGroup.add(b1Arrow); b1Arrow.visible = false;
+  const tg = new THREE.BufferGeometry(); tg.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(600 * 3), 3)); tg.setDrawRange(0, 0);
+  trail = new THREE.Line(tg, new THREE.LineBasicMaterial({ color: '#45d6ec', transparent: true, opacity: 0.6 }));
+  spinGroup.add(trail);
+  const axis = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, -0.34), new THREE.Vector3(0, 0, 0.34)]), new THREE.LineDashedMaterial({ color: '#5aa8ff', dashSize: 0.02, gapSize: 0.015 }));
+  axis.computeLineDistances(); spinGroup.add(axis);
+  const b0t = label('B0', 'plain'); b0t.element.style.color = '#5aa8ff'; b0t.position.set(0, 0, 0.37); spinGroup.add(b0t);
+  const mT = label('M (net magnetisation)', 'plain'); mT.element.style.color = '#45d6ec'; netArrow.add(mT); mT.position.set(0, 0.34, 0); netArrow.userData.tag = mT;
+  // Tissue arrows for the contrast chapter
+  const cols = { wm: '#e9eef3', gm: '#9fb3c8', csf: '#5aa8ff', fat: '#f4b549' };
+  ['fat', 'wm', 'gm', 'csf'].forEach((k, i) => {
+    const a = makeArrow(cols[k], 0.2, 0.55, 0.03);
+    const base = new THREE.Group(); base.position.set(-0.24 + i * 0.16, -0.1, 0); base.add(a);
+    const t = label(P.TISSUES[k].name, 'plain'); t.element.style.color = cols[k]; t.position.set(0, -0.05, 0); base.add(t);
+    spinGroup.add(base);
+    tissueArrows.push({ key: k, arrow: a, base, tag: t });
+  });
+}
+function setSpinsVisible(spinsOn, net, tissue) {
+  spinMesh.visible = spinsOn; netArrow.visible = net; trail.visible = net;
+  for (const t of tissueArrows) t.base.visible = tissue;
+}
+
+/* ---------- gradient field map plane, slice slab, shim sphere ---------- */
+let gradPlane, slab, slabEdge, freqTags = [];
+function buildGradientViz() {
+  const g = new THREE.PlaneGeometry(0.66, 1.9, 24, 60);
+  const colors = new Float32Array(g.attributes.position.count * 3);
+  g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  gradPlane = mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false, toneMapped: false }), { cast: false });
+  scene.add(gradPlane);
+  slab = mesh(new THREE.BoxGeometry(0.7, 0.7, 1), new THREE.MeshBasicMaterial({ color: '#45d6ec', transparent: true, opacity: 0.22, depthWrite: false, toneMapped: false }), { cast: false });
+  slabEdge = new THREE.LineSegments(new THREE.EdgesGeometry(slab.geometry), new THREE.LineBasicMaterial({ color: '#45d6ec' }));
+  slab.add(slabEdge);
+  scene.add(slab);
+  for (const z of [-0.6, -0.3, 0, 0.3, 0.6]) { const t = label('', 'freq'); t.position.set(-0.42, 0.42, z); scene.add(t); freqTags.push({ t, z }); }
+}
+/* Colour the plane by field offset for a gradient along `axis`. */
+function colourGradient(axis, strength) {
+  const pos = gradPlane.geometry.attributes.position, col = gradPlane.geometry.attributes.color;
+  const c = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    // local plane coords: x across, y along length; plane is rotated so y→z (axial) for Z, etc.
+    const wx = gradPlane.userData.map(pos.getX(i), pos.getY(i));
+    const v = clamp((axis === 'x' ? wx.x : axis === 'y' ? wx.y : wx.z) * strength * 1.6, -1, 1);
+    c.setRGB(0.35 + 0.65 * Math.max(0, v), 0.35 + 0.25 * (1 - Math.abs(v)), 0.35 + 0.65 * Math.max(0, -v));
+    col.setXYZ(i, c.r, c.g, c.b);
+  }
+  col.needsUpdate = true;
+}
+function placeGradPlane(axis) {
+  // Z: plane lies in the XZ (horizontal) section along the bore; X and Y: plane spans that axis and Z.
+  if (axis === 'y') { gradPlane.rotation.set(Math.PI / 2, 0, Math.PI / 2); gradPlane.userData.map = (u, v) => ({ x: 0, y: u, z: -v }); }
+  else { gradPlane.rotation.set(-Math.PI / 2, 0, 0); gradPlane.userData.map = (u, v) => ({ x: u, y: 0, z: -v }); }
+  gradPlane.position.set(0, 0, 0);
+}
+
+let shimSphere;
+function buildShim() {
+  const g = new THREE.SphereGeometry(0.25, 64, 48);
+  g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 3), 3));
+  shimSphere = mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, transparent: true, opacity: 0.92 }), { cast: false });
+  const t = label('Imaging volume (DSV)', 'plain'); t.position.set(0, 0.3, 0); shimSphere.add(t);
+  scene.add(shimSphere);
+}
+const SHIM_OK = new THREE.Color('#3fd99a'), SHIM_HI = new THREE.Color('#ff5f6f'), SHIM_LO = new THREE.Color('#5aa8ff');
+function colourShim(level) { // level 0 raw, 1 passive, 2 active
+  const pos = shimSphere.geometry.attributes.position, col = shimSphere.geometry.attributes.color;
+  const amp = [1, 0.18, 0.03][level];
+  const c = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i) / 0.25, y = pos.getY(i) / 0.25, z = pos.getZ(i) / 0.25;
+    const v = clamp(amp * (0.6 * (x * x - y * y) + 0.5 * z * x + 0.45 * (2 * z * z - x * x - y * y) + 0.3 * y), -1, 1);
+    c.copy(SHIM_OK).lerp(v > 0 ? SHIM_HI : SHIM_LO, Math.min(1, Math.abs(v) * 1.4));
+    col.setXYZ(i, c.r, c.g, c.b);
+  }
+  col.needsUpdate = true;
+}
+
+/* ---------- quench plume ---------- */
+let plume, plumeData = [];
+function buildPlume() {
+  const N = 900;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(N * 3), 3));
+  const sprite = canvasTexture(64, 64, (ctx, w) => { const r = ctx.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2); r.addColorStop(0, 'rgba(255,255,255,0.9)'); r.addColorStop(1, 'rgba(255,255,255,0)'); ctx.fillStyle = r; ctx.fillRect(0, 0, w, w); });
+  plume = new THREE.Points(g, new THREE.PointsMaterial({ size: 0.28, map: sprite, transparent: true, opacity: 0.55, depthWrite: false, color: '#dff6ff' }));
+  for (let i = 0; i < N; i++) plumeData.push({ age: Infinity, v: new THREE.Vector3() });
+  plume.visible = false;
+  scene.add(plume);
+}
+
+/* =====================================================================
+ * LAYER STATE (peel / explode / focus)
+ * =================================================================== */
+const layerState = { peel: 0, explode: 0 };
+function targetsFor(peel, explode) {
+  return layers.map((L, i) => ({ v: clamp(i + 1 - peel, 0, 1), z: explode * (i - 4) * 0.95 }));
+}
+function setLayers(peel, explode, dur = 0.9) {
+  layerState.peel = peel; layerState.explode = explode;
+  $('#peel').value = peel; $('#explode').value = explode;
+  $('#peel-v').textContent = fmt(peel, 1); $('#explode-v').textContent = Math.round(explode * 100) + '%';
+  const tg = targetsFor(peel, explode);
+  layers.forEach((L, i) => { gsap.killTweensOf(L); gsap.to(L, { v: tg[i].v, z: tg[i].z, duration: D(dur), ease: 'power2.inOut' }); });
+}
+function applyLayers(t) {
+  for (const L of layers) {
+    L.group.position.z = L.z;
+    L.group.visible = L.v > 0.01;
+    const pulse = L.focus ? 0.12 + 0.08 * Math.sin(t * 3) : 0;
+    L.group.traverse(o => {
+      if (!o.isMesh) return;
+      const m = o.material;
+      const base = m.userData.base ?? 1;
+      const op = base * L.v;
+      const tr = m.userData.baseTransparent || L.v < 0.999;
+      if (m.transparent !== tr) { m.transparent = tr; m.needsUpdate = true; }
+      m.opacity = op;
+      m.depthWrite = m.userData.baseDepthWrite !== false && L.v >= 0.999;
+      if (m.emissive && !m.userData.ownEmissive) { m.emissive.set('#45d6ec'); m.emissiveIntensity = pulse; }
+    });
+    const showTag = S.labels && L.v > 0.5 && focusIds.has(L.id);
+    L.tag.visible = showTag;
+    L.tag.element.classList.toggle('focus', L.focus);
+    if (L.extraTags) for (const e of L.extraTags) e.visible = showTag;
+  }
+}
+let focusIds = new Set();
+function setFocus(ids) { focusIds = new Set(ids); for (const L of layers) L.focus = focusIds.has(L.id); }
+// wires and rungs manage their own emissive
+function markOwnEmissive() {
+  for (const L of layers) {
+    if (L.wires) for (const k in L.wires) for (const m of L.wires[k]) m.userData.ownEmissive = true;
+    if (L.rungs) for (const r of L.rungs) r.m.userData.ownEmissive = true;
+    if (L.coilMats) for (const m of [...L.coilMats, ...L.shieldMats]) m.userData.ownEmissive = true;
+  }
+}
+
+/* =====================================================================
+ * CAMERA
+ * =================================================================== */
+let camTween;
+function flyTo(pos, target, dur = 1.3) {
+  if (camTween) camTween.kill();
+  const o = { px: camera.position.x, py: camera.position.y, pz: camera.position.z, tx: controls.target.x, ty: controls.target.y, tz: controls.target.z };
+  camTween = gsap.to(o, { px: pos[0], py: pos[1], pz: pos[2], tx: target[0], ty: target[1], tz: target[2], duration: D(dur), ease: 'power3.inOut',
+    onUpdate: () => { camera.position.set(o.px, o.py, o.pz); controls.target.set(o.tx, o.ty, o.tz); } });
+}
+function fitPos(pos, target) {
+  // pull back on narrow viewports so the subject stays in frame
+  const a = camera.aspect, k = a < 1 ? 1 + (1 - a) * 0.9 : 1;
+  return pos.map((v, i) => target[i] + (v - target[i]) * k);
+}
+
+/* =====================================================================
+ * ANIMATION STATE
+ * =================================================================== */
+const A = {
+  mode: null, field: false, shielded: true, spins: 'off', bloch: null, gradAxis: 'z', gradOn: false, gradStrength: 0.6,
+  rf: 'off', slice: false, shim: null, quench: null, t: 0,
+};
+// Bloch state for RF/relaxation chapters
+const bloch = { phase: 'idle', alpha: 0, target: 90, start: 0, simMs: 0, tissue: 'wm', frame: 'lab', precess: 0, msPerSec: 400 };
+// Contrast loop
+const contrast = { TR: 500, TE: 15, t: 0, loopMs: 0 };
+// Slice
+const sliceS = { G: 10, BW: 1, offset: 0 };
+// k-space
+const ks = { N: 128, preset: 'T1', kRe: null, kIm: null, rows: 0, playing: false, order: 'centre', mask: 'all', lastStep: 0 };
+
+/* =====================================================================
+ * CHAPTERS
+ * =================================================================== */
+const CH = [];
+const ch = (o) => CH.push(o);
+
+ch({
+  group: 'Construction', title: 'The whole system',
+  cam: [[7.4, 5.6, 9.2], [-1.4, -0.2, -0.4]], peel: 0, explode: 0, focus: [], patient: true, equipment: true, field: false,
+  html: () => `
+    <p class="lead">An MRI scanner is three magnetic systems nested inside one another, plus the electronics and cooling that drive them.</p>
+    <div class="flow"><span>Main magnet B0</span><em>aligns protons</em><span>RF coils</span><em>tip and listen</em><span>Gradient coils</span><em>encode position</em><span>Computer</span><em>builds the image</em></div>
+    <ul class="facts">
+      <li><b>Magnet</b><span>Superconducting coils make a strong, very uniform, static field. Clinical systems are usually 1.5 T or 3 T.</span></li>
+      <li><b>Gradients</b><span>Three coils (X, Y, Z) add small field slopes, switched on and off thousands of times per scan.</span></li>
+      <li><b>RF</b><span>Coils transmit radio pulses at the Larmor frequency and pick up the faint echo from the body.</span></li>
+      <li><b>Room</b><span>The scanner sits in a copper or aluminium RF shield (Faraday cage). Everything that needs power enters through a filtered penetration panel.</span></li>
+    </ul>
+    <p class="note">Drag to orbit, scroll to zoom. Use <b>Peel layers</b> and <b>Explode</b> on the left at any time. The quarter cut-out shows the layers in section.</p>`,
+});
+ch({
+  group: 'Construction', title: 'Assembly, layer by layer', assembly: true,
+  cam: [[3.6, 2.2, 5.6], [0, 0, 0.6]], peel: 0, explode: 0, focus: [], patient: false,
+  html: () => `
+    <p class="lead">Press <b>Build next layer</b> to assemble the scanner from the inside of the magnet outward, in the order a factory would.</p>
+    <div class="ctrl"><div class="row"><button class="btn primary small" id="as-next" type="button">Build next layer</button><button class="btn small" id="as-auto" type="button">Auto-build</button><button class="btn small" id="as-reset" type="button">Start again</button></div>
+    <ol class="steps" id="as-steps"></ol></div>
+    <p class="note" id="as-note"></p>`,
+});
+ch({
+  group: 'Construction', title: 'The superconducting magnet',
+  cam: [[4.2, 3.0, 5.4], [0, 0.2, 0]], peel: 0.95, explode: 0, focus: ['coils'], patient: false, field: true,
+  html: () => `
+    <p class="lead">The main field B0 comes from coils of niobium-titanium (NbTi) wire embedded in copper. Below about 9 K, NbTi has zero electrical resistance.</p>
+    <ul class="facts">
+      <li><b>Persistent mode</b><span>Once the magnet is ramped up, a superconducting switch closes the circuit. The current keeps flowing with no power supply, so the field is <b>always on</b>.</span></li>
+      <li><b>Six main coils</b><span>Several coils along the axis, larger at the ends, shape the field so it is uniform over the imaging volume at the centre.</span></li>
+      <li><b>Shield coils</b><span>Outer coils carry current in the opposite direction. They cancel much of the stray field outside, so the magnet needs less floor space.</span></li>
+      <li><b>Stored energy</b><span>A clinical magnet stores megajoules of energy in its field.</span></li>
+    </ul>
+    <div class="ctrl">
+      <div class="row"><span class="eyebrow">Field strength</span><div class="seg" id="b0-seg">${[0.5, 1.5, 3].map(b => `<button type="button" data-b="${b}" aria-pressed="${S.B0 === b}">${b} T</button>`).join('')}</div></div>
+      <div class="row"><span class="eyebrow">Stray field</span><div class="seg" id="sh-seg"><button type="button" data-s="1" aria-pressed="${A.shielded}">Actively shielded</button><button type="button" data-s="0" aria-pressed="${!A.shielded}">Unshielded</button></div></div>
+      <div class="calc"><div>Larmor frequency<b id="lm-f"></b></div><div>Field vs Earth<b id="lm-e"></b></div></div>
+    </div>
+    <div class="safety"><b>Safety link.</b> The field does not switch off with the scanner. That is why the projectile risk in Zone IV exists day and night.</div>`,
+  after: () => updateB0Readouts(),
+});
+ch({
+  group: 'Construction', title: 'Cryostat and liquid helium',
+  cam: [[2.9, 3.0, 3.6], [0, 0.55, -0.2]], peel: 0.98, explode: 0, focus: ['ovc', 'shield', 'hevessel'], patient: false,
+  html: () => `
+    <p class="lead">The coils sit in liquid helium at 4.2 K (−269 °C) inside a cryostat built like a set of nested vacuum flasks.</p>
+    <ul class="facts">
+      <li><b>Helium vessel</b><span>Holds the coils immersed in liquid helium.</span></li>
+      <li><b>Thermal shield</b><span>An aluminium shell at roughly 40–50 K intercepts heat radiating inward.</span></li>
+      <li><b>Vacuum vessel</b><span>The outer stainless shell at room temperature. The vacuum between the layers stops heat moving by conduction and convection.</span></li>
+      <li><b>Cold head</b><span>A cryocooler on top, driven by a helium compressor, cools the shield and re-condenses evaporated helium. Many magnets now lose almost no helium in normal use.</span></li>
+      <li><b>Helium amount</b><span>Older magnets hold well over a thousand litres. Some newer sealed designs need only a few litres.</span></li>
+    </ul>
+    <div class="ctrl"><div class="calc"><div>Room side<b>≈ 300 K</b></div><div>Thermal shield<b>≈ 40–50 K</b></div><div>Liquid helium<b>4.2 K</b></div><div>NbTi limit<b>≈ 9 K</b></div></div></div>
+    <p class="note">Peel the outer layers with the slider to see each shell in turn.</p>`,
+});
+ch({
+  group: 'Construction', title: 'Shimming the field',
+  cam: [[1.5, 1.05, 1.7], [0, 0, 0]], peel: 5, explode: 0, focus: ['shims'], patient: false, shim: true,
+  html: () => `
+    <p class="lead">A freshly built magnet is not uniform enough to image with. Shimming corrects it until the field varies by only a few parts per million across the imaging volume.</p>
+    <ul class="facts">
+      <li><b>Passive shims</b><span>Small iron pieces placed in trays around the bore at installation, after the field is mapped.</span></li>
+      <li><b>Active shims</b><span>Extra coils whose currents are adjusted for each patient, because the body itself distorts the field.</span></li>
+      <li><b>Why it matters</b><span>Non-uniform field shifts frequencies, which shows up as distortion, signal loss and failed fat suppression.</span></li>
+    </ul>
+    <div class="ctrl">
+      <div class="row"><div class="seg" id="shim-seg"><button type="button" data-l="0" aria-pressed="true">As built</button><button type="button" data-l="1" aria-pressed="false">Passive shims</button><button type="button" data-l="2" aria-pressed="false">+ Active shims</button></div></div>
+      <div class="calc"><div>Field variation over the sphere<b id="shim-ppm">hundreds of ppm</b></div><div>Colour<b style="font-size:12px;font-family:var(--f-body)">green = on target</b></div></div>
+      <p class="note">Map and numbers are illustrative orders of magnitude, not measurements.</p>
+    </div>`,
+});
+ch({
+  group: 'Construction', title: 'Gradient coils',
+  cam: [[2.0, 1.4, 2.3], [0, 0, 0]], peel: 6, explode: 0, focus: ['gradient'], patient: false, grad: true,
+  html: () => `
+    <p class="lead">Three coils wound on a resin cylinder add a field that changes linearly along X, Y or Z. That slope is how the scanner knows where a signal came from.</p>
+    <div class="legend-ax"><span style="color:var(--ax-x)">X saddle coils</span><span style="color:var(--ax-y)">Y saddle coils</span><span style="color:var(--ax-z)">Z Maxwell pairs</span></div>
+    <div class="ctrl">
+      <div class="row"><span class="eyebrow">Pulse axis</span><div class="seg" id="ax-seg">${['x', 'y', 'z'].map(a => `<button type="button" data-a="${a}" aria-pressed="${A.gradAxis === a}">${a.toUpperCase()}</button>`).join('')}</div></div>
+      <div class="range"><label for="g-str">Strength <b id="g-str-v"></b></label><input id="g-str" type="range" min="5" max="80" step="1" value="30"></div>
+      <div class="calc"><div>Field change across 40 cm<b id="g-dB"></b></div><div>Frequency spread<b id="g-df"></b></div></div>
+    </div>
+    <ul class="facts">
+      <li><b>Strength</b><span>Clinical gradients reach tens of mT/m and switch at slew rates of the order of 100–200 T/m/s.</span></li>
+      <li><b>Noise</b><span>Current pulses in the static field create Lorentz forces on the windings. The coil vibrates, which is the loud knocking. Patients need hearing protection.</span></li>
+      <li><b>Heat</b><span>Gradient coils are water-cooled. Fast switching can also stimulate peripheral nerves, which limits how fast they are driven.</span></li>
+    </ul>`,
+});
+ch({
+  group: 'Construction', title: 'RF coils and the Faraday cage',
+  cam: [[1.25, 0.85, 1.6], [0, -0.05, 0]], peel: 7, explode: 0, focus: ['rf'], patient: true, rf: 'tx',
+  html: () => `
+    <p class="lead">The body coil, a "birdcage" of copper rungs between two end rings, transmits a radio-frequency field B1 that rotates at the Larmor frequency. Smaller coils close to the body receive the echo.</p>
+    <div class="ctrl"><div class="row"><div class="seg" id="rf-seg"><button type="button" data-m="tx" aria-pressed="true">Transmit (body coil)</button><button type="button" data-m="rx" aria-pressed="false">Receive (head coil)</button></div></div>
+      <div class="calc"><div>Transmit frequency<b id="rf-f"></b></div><div>Received signal<b>microvolts</b></div></div></div>
+    <ul class="facts">
+      <li><b>Birdcage</b><span>Currents in the rungs follow a sine pattern around the cage. The pattern rotates, producing a rotating B1 field in the bore.</span></li>
+      <li><b>Receive arrays</b><span>Many small coil elements near the anatomy. Each picks up signal from a nearby region, which improves signal-to-noise and allows parallel imaging.</span></li>
+      <li><b>Shielding</b><span>The room's RF shield keeps radio stations and electronics out of the tiny received signal, and keeps the scanner's pulses in.</span></li>
+      <li><b>Heating</b><span>RF energy is absorbed by the body (specific absorption rate, SAR), so the scanner limits RF power.</span></li>
+    </ul>
+    <div class="safety"><b>Safety link.</b> Conductive loops (crossed legs, cables) can concentrate RF currents and cause burns. This is why positioning and cable routing are checked.</div>`,
+});
+ch({
+  group: 'How it works', title: 'Protons in the field',
+  cam: [[0.72, 0.42, 0.86], [0, 0, 0]], peel: 8.6, explode: 0, focus: [], patient: false, spins: 'align',
+  html: () => `
+    <p class="lead">Hydrogen nuclei (protons) in water and fat behave like tiny magnets. In the field B0 they line up slightly more with the field than against it, and precess around it.</p>
+    <div class="ctrl">
+      <div class="row"><span class="eyebrow">Main field</span><div class="seg" id="sp-seg"><button type="button" data-o="0" aria-pressed="false">Off</button><button type="button" data-o="1" aria-pressed="true">On</button></div></div>
+      <div class="formula">f = γ̄ · B0 &nbsp;&nbsp; γ̄ = 42.58 MHz/T (hydrogen)</div>
+      <div class="calc"><div>B0<b id="sp-b0"></b></div><div>Precession frequency<b id="sp-f"></b></div></div>
+    </div>
+    <ul class="facts">
+      <li><b>Net M</b><span>The tiny excess aligned with B0 adds up to a net magnetisation M along the bore axis. MRI measures M, not single protons.</span></li>
+      <li><b>Real excess</b><span>Only a few protons per million are in excess at clinical field strengths. The animation exaggerates it so you can see it.</span></li>
+      <li><b>Precession</b><span>Shown slowed down by roughly a hundred million times.</span></li>
+    </ul>`,
+  after: () => updateB0Readouts(),
+});
+ch({
+  group: 'How it works', title: 'RF excitation and the signal',
+  cam: [[0.7, 0.45, 0.82], [0, 0, 0]], peel: 8.6, explode: 0, focus: [], patient: false, spins: 'bloch',
+  html: () => `
+    <p class="lead">An RF pulse at the Larmor frequency tips M away from B0. The tipped magnetisation precesses and induces a voltage in the receive coil: the MR signal.</p>
+    <div class="ctrl">
+      <div class="range"><label for="flip">Flip angle <b id="flip-v">90°</b></label><input id="flip" type="range" min="10" max="180" step="5" value="90"></div>
+      <div class="row"><button class="btn primary small" id="pulse" type="button">Apply RF pulse</button><div class="seg" id="fr-seg"><button type="button" data-f="lab" aria-pressed="true">Lab frame</button><button type="button" data-f="rot" aria-pressed="false">Rotating frame</button></div></div>
+      <canvas class="chart" id="bloch-chart" width="700" height="300" aria-label="Chart of longitudinal and transverse magnetisation and the received signal over time"></canvas>
+      <div class="calc"><div>Mz (along B0)<b id="mz-v">1.00</b></div><div>Mxy (transverse)<b id="mxy-v">0.00</b></div></div>
+    </div>
+    <ul class="facts">
+      <li><b>Lab frame</b><span>M spirals down as it is tipped and spirals back up as it relaxes, while precessing.</span></li>
+      <li><b>Rotating frame</b><span>Viewed from a frame turning at the Larmor frequency, the precession disappears and the tip is a simple rotation about B1.</span></li>
+      <li><b>FID</b><span>The decaying oscillation picked up after the pulse is the free induction decay.</span></li>
+    </ul>`,
+});
+ch({
+  group: 'How it works', title: 'Relaxation and contrast',
+  cam: [[0.04, 0.78, 0.5], [0, -0.06, 0.02]], peel: 8.6, explode: 0, focus: [], patient: false, spins: 'tissue',
+  html: () => `
+    <p class="lead">After the pulse, each tissue recovers at its own pace. T1 is regrowth along B0; T2 is loss of the transverse signal. Choosing TR and TE decides which difference shows up as brightness.</p>
+    <div class="ctrl">
+      <div class="row"><div class="seg" id="pre-seg">${Object.entries(P.PRESETS).map(([k, v]) => `<button type="button" data-p="${k}" aria-pressed="${k === 'T1'}">${v.name}</button>`).join('')}</div></div>
+      <div class="range"><label for="tr">TR (repetition time) <b id="tr-v"></b></label><input id="tr" type="range" min="100" max="6000" step="50" value="500"></div>
+      <div class="range"><label for="te">TE (echo time) <b id="te-v"></b></label><input id="te" type="range" min="5" max="250" step="5" value="15"></div>
+      <div class="formula">S = PD · (1 − e<sup>−TR/T1</sup>) · e<sup>−TE/T2</sup></div>
+      <div class="bars" id="bars"></div>
+      <div class="imgpair"><figure><canvas id="ph-img" width="128" height="128" aria-label="Synthetic head image with the chosen contrast"></canvas><figcaption>SYNTHETIC HEAD · THIS TR/TE</figcaption></figure>
+      <figure><div class="note" id="pre-note" style="font-size:12.5px"></div></figure></div>
+    </div>
+    <p class="note">T1/T2 values are approximate 1.5 T figures for teaching; published values vary. The image is a synthetic phantom computed from the signal equation, not a scan.</p>`,
+});
+ch({
+  group: 'How it works', title: 'Slice selection',
+  cam: [[2.1, 1.25, 2.4], [0, -0.05, 0.1]], peel: 6.6, explode: 0, focus: [], patient: true, slice: true,
+  html: () => `
+    <p class="lead">With the Z gradient on, every position along the bore has a slightly different Larmor frequency. An RF pulse containing only a narrow band of frequencies excites only the matching slice.</p>
+    <div class="ctrl">
+      <div class="range"><label for="sg">Gradient G <b id="sg-v"></b></label><input id="sg" type="range" min="2" max="40" step="1" value="10"></div>
+      <div class="range"><label for="sbw">RF bandwidth <b id="sbw-v"></b></label><input id="sbw" type="range" min="0.2" max="5" step="0.1" value="1"></div>
+      <div class="range"><label for="soff">RF frequency offset <b id="soff-v"></b></label><input id="soff" type="range" min="-40" max="40" step="0.5" value="0"></div>
+      <div class="formula">Δz = BW / (γ̄ · G) &nbsp;&nbsp; z₀ = Δf / (γ̄ · G)</div>
+      <div class="calc"><div>Slice thickness<b id="s-th"></b></div><div>Slice position<b id="s-z"></b></div></div>
+      <p class="note">The slab is drawn 10× thicker than the computed value so it is visible.</p>
+    </div>
+    <ul class="facts">
+      <li><b>Thinner slice</b><span>Use a stronger gradient or a narrower RF bandwidth.</span></li>
+      <li><b>Move the slice</b><span>Shift the RF centre frequency; the gradient stays the same.</span></li>
+    </ul>`,
+  after: () => updateSlice(),
+});
+ch({
+  group: 'How it works', title: 'From k-space to image',
+  cam: [[2.1, 1.25, 2.4], [0, -0.05, 0.1]], peel: 6.6, explode: 0, focus: [], patient: true, slice: true, kspace: true,
+  html: () => `
+    <p class="lead">Within the slice, the X and Y gradients give each location its own frequency and phase. Each repetition records one line of spatial frequencies (k-space). An inverse Fourier transform turns the filled k-space into the image.</p>
+    <div class="ctrl">
+      <div class="row"><button class="btn primary small" id="ks-play" type="button">Acquire</button><button class="btn small" id="ks-reset" type="button">Clear</button>
+        <div class="seg" id="ks-ord"><button type="button" data-o="linear" aria-pressed="false">Top to bottom</button><button type="button" data-o="centre" aria-pressed="true">Centre out</button></div></div>
+      <div class="imgpair"><figure><canvas id="ks-k" width="128" height="128" aria-label="k-space magnitude (log scale)"></canvas><figcaption>K-SPACE · <span id="ks-rows">0</span>/128 LINES</figcaption></figure>
+      <figure><canvas id="ks-i" width="128" height="128" aria-label="Image reconstructed from the acquired lines"></canvas><figcaption>IMAGE · INVERSE FFT</figcaption></figure></div>
+      <div class="row"><span class="eyebrow">Keep only</span><div class="seg" id="ks-mask"><button type="button" data-m="all" aria-pressed="true">All lines</button><button type="button" data-m="centre" aria-pressed="false">Centre</button><button type="button" data-m="edges" aria-pressed="false">Edges</button></div>
+        <div class="seg" id="ks-pre">${Object.keys(P.PRESETS).map(k => `<button type="button" data-p="${k}" aria-pressed="${k === ks.preset}">${k}</button>`).join('')}</div></div>
+    </div>
+    <ul class="facts">
+      <li><b>Centre of k-space</b><span>Low spatial frequencies: overall brightness and contrast. Keep only the centre and the image is blurred but the contrast is right.</span></li>
+      <li><b>Edges</b><span>High spatial frequencies: fine detail and edges.</span></li>
+      <li><b>Scan time</b><span>Roughly TR × number of phase-encode lines (× averages), which is why long-TR scans take minutes.</span></li>
+    </ul>
+    <p class="note">This runs a real 2D FFT on a synthetic phantom. Real scanners also correct for coil sensitivity, noise and motion.</p>`,
+});
+ch({
+  group: 'How it works', title: 'Quench',
+  cam: [[4.8, 4.0, 5.8], [0, 1.1, -0.4]], peel: 0, explode: 0, focus: ['ovc'], patient: false, quench: true, field: true,
+  html: () => `
+    <p class="lead">A quench is a sudden loss of superconductivity. The coil becomes resistive, the stored energy turns to heat, and the liquid helium boils off very quickly.</p>
+    <div class="ctrl"><div class="row"><button class="btn danger small" id="q-go" type="button">Simulate quench</button><button class="btn small" id="q-reset" type="button">Restore</button></div>
+      <div class="calc"><div>Field B0<b id="q-b">1.50 T</b></div><div>Helium<b id="q-he">liquid</b></div></div></div>
+    <ul class="facts">
+      <li><b>Expansion</b><span>Liquid helium expands roughly 750 times when it warms to room-temperature gas. The quench pipe carries it outside the building.</span></li>
+      <li><b>Hazards</b><span>If gas enters the room: oxygen displacement, extreme cold, and pressure that can make an inward-opening door hard to open. Oxygen monitors and room ventilation help.</span></li>
+      <li><b>Magnet stop</b><span>The magnet stop (emergency run-down) button deliberately quenches the magnet. It is for emergencies such as a person pinned by a ferromagnetic object. It is not the same as the emergency power-off.</span></li>
+      <li><b>Cost</b><span>Re-filling helium and ramping the magnet back up takes days and is expensive.</span></li>
+    </ul>
+    <p class="note">Timescale is sped up. The animation is illustrative.</p>`,
+});
+ch({
+  group: 'Check yourself', title: 'Six quick questions', cam: [[5.2, 3.4, 6.2], [0, 0.2, 0]], peel: 0, explode: 0.55, focus: [], patient: false,
+  html: () => quizHTML(),
+  after: () => bindQuiz(),
+});
+
+/* ---------- chapter rail ---------- */
+const chapEl = $('#chapters');
+let lastGroup = '';
+CH.forEach((c, i) => {
+  if (c.group !== lastGroup) { const li = document.createElement('li'); li.className = 'grp'; li.textContent = c.group; chapEl.appendChild(li); lastGroup = c.group; }
+  const li = document.createElement('li');
+  li.innerHTML = `<button type="button" data-i="${i}"><span class="n">${i + 1}</span><span>${esc(c.title)}</span></button>`;
+  li.querySelector('button').addEventListener('click', () => go(i));
+  chapEl.appendChild(li);
+});
+$('#dots').innerHTML = CH.map(() => '<i></i>').join('');
+
+const contentEl = $('#content');
+function go(i) {
+  i = clamp(i, 0, CH.length - 1);
+  const c = CH[i];
+  S.chapter = i;
+  chapEl.querySelectorAll('button[data-i]').forEach(b => { const k = +b.dataset.i; if (k === i) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current'); if (k <= i) b.classList.add('seen'); });
+  $('#dots').querySelectorAll('i').forEach((d, k) => d.classList.toggle('on', k <= i));
+  const gi = CH.filter((x, k) => k <= i && x.group === c.group).length;
+  $('#hud-eyebrow').textContent = `${c.group} · ${gi}`;
+  $('#hud-title').textContent = c.title;
+  $('#prev').disabled = i === 0;
+  $('#next').textContent = i === CH.length - 1 ? 'Restart' : 'Next →';
+  // scene configuration
+  stopAssembly();
+  setLayers(c.peel, c.explode);
+  setFocus(c.focus);
+  const tgt = c.cam[1];
+  flyTo(fitPos(c.cam[0], tgt), tgt);
+  equipment.visible = !!c.equipment;
+  S.patientDefault = c.patient; setPatient(c.patient);
+  A.field = !!c.field; field.visible = A.field;
+  fieldSets.shielded.visible = A.field && A.shielded; fieldSets.unshielded.visible = A.field && !A.shielded;
+  A.spins = c.spins || 'off'; spinGroup.visible = !!c.spins;
+  setSpinsVisible(c.spins === 'align', c.spins === 'align' || c.spins === 'bloch', c.spins === 'tissue');
+  if (c.spins === 'align') { A.b0on = 1; netArrow.quaternion.identity(); }
+  if (c.spins === 'bloch') resetBloch();
+  if (c.spins === 'tissue') contrast.t = 0;
+  A.gradOn = !!c.grad; gradPlane.visible = !!c.grad || !!c.slice;
+  if (c.grad) { placeGradPlane(A.gradAxis); colourGradient(A.gradAxis, A.gradStrength); }
+  if (c.slice) { placeGradPlane('z'); colourGradient('z', 0.55); }
+  A.slice = !!c.slice; slab.visible = A.slice; freqTags.forEach(f => f.t.visible = A.slice);
+  A.rf = c.rf || 'off';
+  headCoil.userData.tag.visible = !!c.rf;
+  shimSphere.visible = !!c.shim; if (c.shim) colourShim(0);
+  A.kspace = !!c.kspace;
+  if (!c.quench) resetQuench(); plume.visible = !!c.quench;
+  A.quenchCh = !!c.quench;
+  // panel
+  contentEl.innerHTML = `<div class="body"><div><div class="eyebrow">${esc(c.group)}</div><h2>${esc(c.title)}</h2></div>${c.html()}</div>`;
+  contentEl.scrollTop = 0;
+  bindChapter(i);
+  if (c.after) c.after();
+  renderReadouts();
+  gsap.fromTo(contentEl.querySelectorAll('.body > *'), { y: 10, opacity: 0 }, { y: 0, opacity: 1, duration: D(0.45), stagger: D(0.04), ease: 'power2.out', clearProps: 'transform,opacity' });
+  try { history.replaceState(null, '', location.search + '#ch' + (i + 1)); } catch (e) {}
+  postChapter();
+}
+$('#prev').addEventListener('click', () => go(S.chapter - 1));
+$('#next').addEventListener('click', () => go(S.chapter === CH.length - 1 ? 0 : S.chapter + 1));
+window.addEventListener('keydown', e => {
+  if (e.target.closest && e.target.closest('input, textarea, select')) return;
+  if (e.key === 'ArrowRight') { e.preventDefault(); go(S.chapter + 1); }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); go(S.chapter - 1); }
+});
+
+/* ---------- rail controls ---------- */
+$('#peel').addEventListener('input', e => { stopAssembly(); setLayers(+e.target.value, layerState.explode, 0.25); });
+$('#explode').addEventListener('input', e => { stopAssembly(); setLayers(layerState.peel, +e.target.value, 0.25); });
+$('#t-labels').addEventListener('click', e => { S.labels = !S.labels; e.currentTarget.setAttribute('aria-pressed', S.labels); $('#labels').style.display = S.labels ? '' : 'none'; });
+$('#t-patient').addEventListener('click', () => setPatient(!S.patient));
+$('#t-reset').addEventListener('click', () => { const c = CH[S.chapter]; flyTo(fitPos(c.cam[0], c.cam[1]), c.cam[1]); });
+$('#t-rotate').addEventListener('click', e => { S.autoRotate = !S.autoRotate; controls.autoRotate = S.autoRotate; controls.autoRotateSpeed = 0.6; e.currentTarget.setAttribute('aria-pressed', S.autoRotate); });
+function setPatient(on) { S.patient = on; patient.visible = on; $('#t-patient').setAttribute('aria-pressed', on); }
+
+/* ---------- per-chapter bindings ---------- */
+function segBind(id, attr, fn) {
+  const el = $(id); if (!el) return;
+  el.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    el.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b));
+    fn(b.dataset[attr]);
+  }));
+}
+function bindChapter(i) {
+  const c = CH[i];
+  if (c.assembly) bindAssembly();
+  segBind('#b0-seg', 'b', v => { S.B0 = +v; updateB0Readouts(); });
+  segBind('#sh-seg', 's', v => { A.shielded = v === '1'; fieldSets.shielded.visible = A.shielded; fieldSets.unshielded.visible = !A.shielded; if (!A.shielded) flyTo(fitPos([9, 6.5, 11], [0, 0, 0]), [0, 0, 0]); else flyTo(fitPos(c.cam[0], c.cam[1]), c.cam[1]); });
+  segBind('#shim-seg', 'l', v => { colourShim(+v); $('#shim-ppm').textContent = ['hundreds of ppm', 'a few ppm', 'under 1 ppm'][+v]; });
+  segBind('#ax-seg', 'a', v => { A.gradAxis = v; placeGradPlane(v); colourGradient(v, A.gradStrength); updateGrad(); });
+  const gs = $('#g-str'); if (gs) { gs.addEventListener('input', () => { A.gradStrength = +gs.value / 50; colourGradient(A.gradAxis, A.gradStrength); updateGrad(); }); A.gradStrength = +gs.value / 50; updateGrad(); }
+  segBind('#rf-seg', 'm', v => { A.rf = v; });
+  if ($('#rf-f')) $('#rf-f').textContent = fmt(P.larmorMHz(S.B0)) + ' MHz';
+  segBind('#sp-seg', 'o', v => { A.b0target = +v; gsap.to(A, { b0on: +v, duration: D(1.6), ease: 'power2.inOut' }); });
+  const fl = $('#flip'); if (fl) fl.addEventListener('input', () => { bloch.target = +fl.value; $('#flip-v').textContent = fl.value + '°'; });
+  if ($('#pulse')) $('#pulse').addEventListener('click', applyPulse);
+  segBind('#fr-seg', 'f', v => { bloch.frame = v; trailPts = []; });
+  segBind('#pre-seg', 'p', v => { const p = P.PRESETS[v]; contrast.TR = p.TR; contrast.TE = p.TE; $('#tr').value = p.TR; $('#te').value = p.TE; updateContrast(); });
+  const tr = $('#tr'), te = $('#te');
+  if (tr) { tr.addEventListener('input', () => { contrast.TR = +tr.value; markPreset(); updateContrast(); }); te.addEventListener('input', () => { contrast.TE = +te.value; markPreset(); updateContrast(); }); updateContrast(); }
+  for (const id of ['#sg', '#sbw', '#soff']) { const el = $(id); if (el) el.addEventListener('input', () => { sliceS.G = +$('#sg').value; sliceS.BW = +$('#sbw').value; sliceS.offset = +$('#soff').value; updateSlice(); }); }
+  if (c.kspace) bindKspace();
+  if ($('#q-go')) { $('#q-go').addEventListener('click', startQuench); $('#q-reset').addEventListener('click', resetQuench); }
+}
+function markPreset() {
+  const seg = $('#pre-seg'); if (!seg) return;
+  seg.querySelectorAll('button').forEach(b => { const p = P.PRESETS[b.dataset.p]; b.setAttribute('aria-pressed', p.TR === contrast.TR && p.TE === contrast.TE); });
+}
+
+/* ---------- readouts ---------- */
+function updateB0Readouts() {
+  const f = P.larmorMHz(S.B0);
+  $('#b0-chip').textContent = `B0 ${S.B0} T · ${fmt(f)} MHz`;
+  if ($('#lm-f')) $('#lm-f').textContent = fmt(f) + ' MHz';
+  if ($('#lm-e')) $('#lm-e').textContent = '≈ ' + Math.round(S.B0 / 50e-6).toLocaleString() + '×';
+  if ($('#sp-b0')) $('#sp-b0').textContent = S.B0 + ' T';
+  if ($('#sp-f')) $('#sp-f').textContent = fmt(f) + ' MHz';
+  renderReadouts();
+}
+function renderReadouts() {
+  const c = CH[S.chapter];
+  const r = [];
+  if (c.field || c.spins === 'align') r.push(['B0', fmt(A.quenchB ?? S.B0) + ' T']);
+  if (c.spins) r.push(['Larmor', fmt(P.larmorMHz(S.B0)) + ' MHz']);
+  if (c.grad) r.push(['Gradient ' + A.gradAxis.toUpperCase(), Math.round(A.gradStrength * 50) + ' mT/m']);
+  if (c.slice) r.push(['Slice', fmt(P.sliceThicknessMm(sliceS.BW, sliceS.G), 1) + ' mm']);
+  $('#readouts').innerHTML = r.map(([k, v]) => `<div class="readout">${esc(k)}<b>${esc(v)}</b></div>`).join('');
+}
+function updateGrad() {
+  const G = A.gradStrength * 50; // mT/m
+  if ($('#g-str-v')) $('#g-str-v').textContent = Math.round(G) + ' mT/m';
+  if ($('#g-dB')) $('#g-dB').textContent = fmt(G * 0.4, 1) + ' mT';
+  if ($('#g-df')) $('#g-df').textContent = '± ' + fmt(P.frequencyShiftKHz(0.2, G), 0) + ' kHz';
+  renderReadouts();
+}
+
+/* ---------- assembly ---------- */
+const ASSEMBLY = [
+  ['coils', 'Wind the NbTi coils on a precision former.'],
+  ['hevessel', 'Seal the coils in the helium vessel.'],
+  ['shield', 'Wrap the vessel in the thermal radiation shield.'],
+  ['ovc', 'Close the outer vacuum vessel, fit the cold head and quench vent, pump down the vacuum, cool down and ramp the field.'],
+  ['shims', 'Map the field and load passive shim trays.'],
+  ['gradient', 'Slide in the water-cooled gradient coil.'],
+  ['rf', 'Fit the RF body coil.'],
+  ['liner', 'Add the bore liner.'],
+  ['cover', 'Mount the covers. Add the table and receive coils.'],
+];
+let asStep = 0, asTimer = null;
+function bindAssembly() {
+  asStep = 0;
+  for (const L of layers) { gsap.killTweensOf(L); L.v = 0; L.z = 2.6; }
+  renderAssemblySteps();
+  $('#as-next').addEventListener('click', assembleNext);
+  $('#as-auto').addEventListener('click', () => { stopAssembly(); assembleNext(); asTimer = setInterval(() => { if (asStep >= ASSEMBLY.length) stopAssembly(); else assembleNext(); }, RM ? 400 : 1500); });
+  $('#as-reset').addEventListener('click', () => { stopAssembly(); bindAssemblyReset(); });
+}
+function bindAssemblyReset() { asStep = 0; for (const L of layers) { gsap.killTweensOf(L); gsap.to(L, { v: 0, z: 2.6, duration: D(0.5) }); } setFocus([]); renderAssemblySteps(); }
+function stopAssembly() { if (asTimer) { clearInterval(asTimer); asTimer = null; } }
+function assembleNext() {
+  if (asStep >= ASSEMBLY.length) return;
+  const [id] = ASSEMBLY[asStep];
+  const L = layers.find(x => x.id === id);
+  setFocus([id]);
+  gsap.killTweensOf(L);
+  L.z = 2.6; L.v = 0;
+  gsap.to(L, { v: 1, duration: D(0.4) });
+  gsap.to(L, { z: 0, duration: D(1.1), ease: 'power3.out' });
+  asStep++;
+  renderAssemblySteps();
+  if (asStep === ASSEMBLY.length) { patient.visible = true; S.patient = true; $('#t-patient').setAttribute('aria-pressed', true); setTimeout(() => setFocus([]), 1400); }
+}
+function renderAssemblySteps() {
+  const ol = $('#as-steps'); if (!ol) return;
+  ol.innerHTML = ASSEMBLY.map(([id, txt], k) => `<li class="${k < asStep - 1 ? 'done' : k === asStep - 1 ? 'now' : ''}"><i>${k < asStep ? '✓' : k + 1}</i><span><b>${esc(layers.find(x => x.id === id).name)}.</b> ${esc(txt)}</span></li>`).join('');
+  $('#as-note').textContent = asStep === ASSEMBLY.length ? 'Assembled. The magnet is energised before the covers go on, so from here on the field is always present.' : '';
+  if (asStep < ASSEMBLY.length) { patient.visible = false; }
+}
+
+/* ---------- Bloch (RF chapter) ---------- */
+function resetBloch() { bloch.phase = 'idle'; bloch.alpha = 0; bloch.simMs = 0; bloch.precess = 0; trailPts = []; drawBlochChart(); }
+function applyPulse() { bloch.phase = 'pulse'; bloch.start = performance.now(); bloch.alpha0 = currentTilt(); bloch.simMs = 0; trailPts = []; chartData = []; }
+function currentTilt() { if (bloch.phase === 'relax') { const r = P.relax(bloch.simMs, bloch.tissue, bloch.target); return Math.atan2(r.mxy, r.mz); } return bloch.alpha; }
+let chartData = [];
+function blochVector(dtSec) {
+  // returns { m: Vector3 (world), b1: Vector3|null, mz, mxy }
+  const w = 2 * Math.PI * 0.9; // display precession rate (rad/s)
+  if (bloch.frame === 'lab') bloch.precess += w * dtSec;
+  let mz = 1, mxy = 0, b1 = null;
+  if (bloch.phase === 'pulse') {
+    const k = clamp((performance.now() - bloch.start) / (RM ? 1 : 1400), 0, 1);
+    bloch.alpha = (bloch.target * Math.PI / 180) * k;
+    mz = Math.cos(bloch.alpha); mxy = Math.sin(bloch.alpha);
+    b1 = true;
+    if (k >= 1) { bloch.phase = 'relax'; bloch.simMs = 0; }
+  } else if (bloch.phase === 'relax') {
+    bloch.simMs += dtSec * bloch.msPerSec;
+    const r = P.relax(bloch.simMs, bloch.tissue, bloch.target);
+    mz = r.mz; mxy = r.mxy;
+    if (bloch.simMs > 4200) { bloch.phase = 'idle'; }
+  }
+  const ph = bloch.frame === 'lab' ? bloch.precess : 0;
+  // world: z = bore axis; transverse plane = x/y
+  const m = new THREE.Vector3(mxy * Math.cos(ph), mxy * Math.sin(ph), mz);
+  const b1v = b1 ? new THREE.Vector3(Math.cos(ph - Math.PI / 2), Math.sin(ph - Math.PI / 2), 0) : null;
+  return { m, b1: b1v, mz, mxy, ph };
+}
+function drawBlochChart() {
+  const cv = $('#bloch-chart'); if (!cv) return;
+  const ctx = cv.getContext('2d'), w = cv.width, h = cv.height;
+  ctx.clearRect(0, 0, w, h);
+  const pad = { l: 46, r: 14, t: 18, b: 34 };
+  const X = t => pad.l + (t / 4200) * (w - pad.l - pad.r), Y = v => pad.t + (1 - (v + 1) / 2) * (h - pad.t - pad.b);
+  ctx.strokeStyle = 'rgba(130,180,230,.12)'; ctx.lineWidth = 1; ctx.font = '500 18px "IBM Plex Mono", monospace'; ctx.fillStyle = '#8297ad';
+  for (const v of [-1, 0, 1]) { ctx.beginPath(); ctx.moveTo(pad.l, Y(v)); ctx.lineTo(w - pad.r, Y(v)); ctx.stroke(); ctx.fillText(v, 12, Y(v) + 6); }
+  for (const t of [0, 1000, 2000, 3000, 4000]) { ctx.fillText(t / 1000 + ' s', X(t) - 12, h - 8); }
+  const tis = P.TISSUES[bloch.tissue];
+  const curve = (fn, col, lw = 3) => { ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.beginPath(); for (let t = 0; t <= 4200; t += 20) { const v = fn(t); t ? ctx.lineTo(X(t), Y(v)) : ctx.moveTo(X(t), Y(v)); } ctx.stroke(); };
+  curve(t => P.relax(t, tis, bloch.target).mz, '#5aa8ff');
+  curve(t => P.relax(t, tis, bloch.target).mxy, '#45d6ec');
+  curve(t => P.relax(t, tis, bloch.target).mxy * Math.cos(t / 1000 * 2 * Math.PI * 9), 'rgba(241,182,137,.75)', 1.6);
+  ctx.fillStyle = '#5aa8ff'; ctx.fillText('Mz', w - 60, Y(P.relax(4200, tis, bloch.target).mz) - 8);
+  ctx.fillStyle = '#45d6ec'; ctx.fillText('Mxy', X(260), Y(Math.abs(Math.sin(bloch.target * Math.PI / 180))) - 8);
+  ctx.fillStyle = '#f1b689'; ctx.fillText('signal (FID, slowed)', X(1500), Y(-0.55));
+  if (bloch.phase === 'relax') { ctx.strokeStyle = '#f4b549'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(X(bloch.simMs), pad.t); ctx.lineTo(X(bloch.simMs), h - pad.b); ctx.stroke(); }
+  ctx.fillStyle = '#56697e'; ctx.fillText(`${tis.name}: T1 ${tis.t1} ms, T2 ${tis.t2} ms`, pad.l, 14);
+}
+
+/* ---------- contrast chapter ---------- */
+const phLabels = P.headPhantom(128);
+function updateContrast() {
+  if ($('#tr-v')) $('#tr-v').textContent = contrast.TR + ' ms';
+  if ($('#te-v')) $('#te-v').textContent = contrast.TE + ' ms';
+  const keys = ['fat', 'wm', 'gm', 'csf'];
+  const vals = keys.map(k => P.signalSE(k, contrast.TR, contrast.TE));
+  const mx = Math.max(...vals, 1e-6);
+  const bars = $('#bars');
+  if (bars) bars.innerHTML = keys.map((k, i) => `<div class="b"><span>${esc(P.TISSUES[k].name)}</span><span class="track"><i style="width:${(vals[i] / mx) * 100}%"></i></span><span class="mono">${fmt(vals[i], 2)}</span></div>`).join('');
+  const preset = Object.values(P.PRESETS).find(p => p.TR === contrast.TR && p.TE === contrast.TE);
+  if ($('#pre-note')) $('#pre-note').textContent = preset ? preset.note : 'Custom TR/TE. Watch which tissue gets brighter as you move each slider.';
+  drawImage($('#ph-img'), P.phantomImage(phLabels, contrast.TR, contrast.TE), 128);
+}
+function drawImage(cv, data, N, logScale) {
+  if (!cv) return;
+  const ctx = cv.getContext('2d');
+  const img = ctx.createImageData(N, N);
+  let mx = 1e-9; for (let i = 0; i < data.length; i++) mx = Math.max(mx, logScale ? Math.log1p(data[i]) : data[i]);
+  for (let i = 0; i < data.length; i++) {
+    const v = Math.round(255 * clamp((logScale ? Math.log1p(data[i]) : data[i]) / mx, 0, 1));
+    img.data[i * 4] = v; img.data[i * 4 + 1] = v; img.data[i * 4 + 2] = logScale ? Math.min(255, v + 18) : v; img.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+/* ---------- slice chapter ---------- */
+function updateSlice() {
+  const th = P.sliceThicknessMm(sliceS.BW, sliceS.G);
+  const z = P.sliceOffsetMm(sliceS.offset, sliceS.G);
+  if ($('#sg-v')) $('#sg-v').textContent = sliceS.G + ' mT/m';
+  if ($('#sbw-v')) $('#sbw-v').textContent = fmt(sliceS.BW, 1) + ' kHz';
+  if ($('#soff-v')) $('#soff-v').textContent = (sliceS.offset > 0 ? '+' : '') + fmt(sliceS.offset, 1) + ' kHz';
+  if ($('#s-th')) $('#s-th').textContent = fmt(th, 2) + ' mm';
+  if ($('#s-z')) $('#s-z').textContent = (z > 0 ? '+' : '') + fmt(z, 1) + ' mm';
+  const zm = clamp(z / 1000, -0.9, 0.9);
+  gsap.to(slab.position, { z: zm, duration: D(0.3) });
+  gsap.to(slab.scale, { z: Math.max(0.004, th / 1000 * 10), duration: D(0.3) });
+  colourGradient('z', clamp(sliceS.G / 18, 0.1, 1.2));
+  for (const f of freqTags) f.t.element.textContent = `${f.z > 0 ? '+' : ''}${fmt(P.frequencyShiftKHz(f.z, sliceS.G), 0)} kHz`;
+  renderReadouts();
+}
+
+/* ---------- k-space chapter ---------- */
+function computeK() {
+  const p = P.PRESETS[ks.preset];
+  const img = P.phantomImage(phLabels, p.TR, p.TE);
+  ks.kRe = Float64Array.from(img); ks.kIm = new Float64Array(img.length);
+  P.fft2d(ks.kRe, ks.kIm, ks.N, false);
+  const mag = new Float64Array(img.length); for (let i = 0; i < mag.length; i++) mag[i] = Math.hypot(ks.kRe[i], ks.kIm[i]);
+  ks.kMagShift = P.fftshift(mag, ks.N);
+}
+function rowOrder() {
+  const N = ks.N, h = N / 2;
+  if (ks.order === 'linear') return [...Array(N).keys()];
+  const o = [h]; for (let d = 1; d <= h; d++) { if (h - d >= 0) o.push(h - d); if (h + d < N) o.push(h + d); } return o;
+}
+function ksMaskFn() {
+  const N = ks.N, acquired = new Set(rowOrder().slice(0, ks.rows));
+  return r => acquired.has(r) && (ks.mask === 'all' || (ks.mask === 'centre' ? Math.abs(r - N / 2) < 8 : Math.abs(r - N / 2) >= 8));
+}
+function drawK() {
+  const N = ks.N; if (!ks.kRe) computeK();
+  const m = ksMaskFn();
+  const shown = new Float64Array(N * N);
+  for (let r = 0; r < N; r++) if (m(r)) for (let x = 0; x < N; x++) shown[r * N + x] = ks.kMagShift[r * N + x];
+  drawImage($('#ks-k'), shown, N, true);
+  const img = P.reconstruct(ks.kRe, ks.kIm, N, m);
+  drawImage($('#ks-i'), img, N);
+  if ($('#ks-rows')) $('#ks-rows').textContent = ks.rows;
+}
+function bindKspace() {
+  computeK(); ks.rows = 0; ks.playing = false; drawK();
+  $('#ks-play').addEventListener('click', () => { if (ks.rows >= ks.N) ks.rows = 0; ks.playing = !ks.playing; $('#ks-play').textContent = ks.playing ? 'Pause' : 'Acquire'; });
+  $('#ks-reset').addEventListener('click', () => { ks.rows = 0; ks.playing = false; $('#ks-play').textContent = 'Acquire'; drawK(); });
+  segBind('#ks-ord', 'o', v => { ks.order = v; drawK(); });
+  segBind('#ks-mask', 'm', v => { ks.mask = v; if (ks.rows === 0) ks.rows = ks.N; drawK(); });
+  segBind('#ks-pre', 'p', v => { ks.preset = v; computeK(); drawK(); });
+}
+
+/* ---------- quench ---------- */
+const Q = { running: false, t: 0 };
+function startQuench() {
+  if (Q.running) return;
+  Q.running = true; Q.t = 0; plume.visible = true;
+  $('#q-he') && ($('#q-he').textContent = 'boiling off');
+  flyTo(fitPos([5.5, 4.6, 6.4], [0, 1.6, -0.6]), [0, 1.6, -0.6], 1.2);
+}
+function resetQuench() {
+  Q.running = false; Q.t = 0; A.quenchB = null;
+  for (const p of plumeData) p.age = Infinity;
+  fadeField(1);
+  if ($('#q-b')) $('#q-b').textContent = fmt(S.B0) + ' T';
+  if ($('#q-he')) $('#q-he').textContent = 'liquid';
+}
+function stepQuench(dt) {
+  const pos = plume.geometry.attributes.position;
+  const vent = new THREE.Vector3(0, 1.12 + 1.65, 0.32 - 2.4); // end of the quench pipe (world)
+  const emitting = Q.running && Q.t < 9;
+  if (Q.running) Q.t += dt;
+  let spawn = emitting ? Math.floor(260 * dt * (1.6 - Q.t / 9)) : 0;
+  for (let i = 0; i < plumeData.length; i++) {
+    const p = plumeData[i];
+    if (p.age === Infinity) {
+      if (spawn > 0) { spawn--; p.age = 0; p.pos = vent.clone(); p.v.set((Math.random() - 0.5) * 0.6, 1.6 + Math.random() * 1.2, -0.4 + (Math.random() - 0.5) * 0.6); }
+      else { pos.setXYZ(i, 0, -50, 0); continue; }
+    }
+    p.age += dt;
+    p.v.multiplyScalar(1 - 0.6 * dt); p.v.y += 0.15 * dt;
+    p.pos.addScaledVector(p.v, dt);
+    pos.setXYZ(i, p.pos.x, p.pos.y, p.pos.z);
+    if (p.age > 4) p.age = Infinity;
+  }
+  pos.needsUpdate = true;
+  if (Q.running) {
+    const k = clamp(Q.t / 6, 0, 1);
+    const B = S.B0 * Math.pow(1 - k, 1.6);
+    A.quenchB = B;
+    if ($('#q-b')) $('#q-b').textContent = fmt(B) + ' T';
+    fadeField(1 - k);
+    if (k >= 1 && $('#q-he')) $('#q-he').textContent = 'vented as gas';
+    renderReadoutsThrottled();
+  }
+}
+let roT = 0; function renderReadoutsThrottled() { const n = performance.now(); if (n - roT > 200) { roT = n; renderReadouts(); } }
+
+/* ---------- quiz ---------- */
+const QUIZ = [
+  ['Why is the main magnetic field present even when the scanner is switched off?', ['The coils are superconducting and run in persistent mode', 'A battery keeps the magnet powered', 'The gradient coils hold the field', 'It is not; the field switches off with the console'], 0, 'Current circulates in the superconducting loop with no resistance and no power supply. Only a ramp-down or a quench removes the field.'],
+  ['What is the Larmor frequency of hydrogen at 3 T?', ['About 64 MHz', 'About 128 MHz', 'About 300 MHz', 'About 42 kHz'], 1, 'f = 42.58 MHz/T × 3 T ≈ 127.7 MHz.'],
+  ['Which component makes the loud knocking during a scan?', ['RF body coil', 'Cold head', 'Gradient coils', 'Passive shims'], 2, 'Rapidly switched gradient currents in the strong static field create Lorentz forces that vibrate the coil.'],
+  ['To make a thinner slice, you can…', ['Lower the gradient strength', 'Widen the RF bandwidth', 'Increase the gradient strength', 'Raise TR'], 2, 'Δz = BW / (γ̄·G). A stronger gradient (or a narrower bandwidth) gives a thinner slice.'],
+  ['In a T2-weighted image, which tissue is brightest?', ['Fat', 'White matter', 'Cerebrospinal fluid', 'Cortical bone'], 2, 'Fluid has a very long T2, so it keeps its transverse signal at long TE.'],
+  ['What does the centre of k-space mainly carry?', ['Fine edges and detail', 'Overall contrast and brightness', 'Only noise', 'Patient position'], 1, 'Low spatial frequencies at the centre hold contrast; the edges hold detail.'],
+];
+function quizHTML() {
+  return `<p class="lead">Check what you picked up. Answers are explained as you go.</p><div class="quiz">${QUIZ.map(([q, opts], i) => `<div class="q" data-q="${i}"><p>${i + 1}. ${esc(q)}</p><div class="opts">${opts.map((o, k) => `<button type="button" data-k="${k}">${esc(o)}</button>`).join('')}</div><div class="why" hidden></div></div>`).join('')}</div><div class="ctrl"><div class="calc"><div>Answered<b id="qz-n">0 / ${QUIZ.length}</b></div><div>Correct<b id="qz-c">0</b></div></div></div>`;
+}
+function bindQuiz() {
+  let n = 0, c = 0;
+  contentEl.querySelectorAll('.q').forEach(qEl => {
+    const i = +qEl.dataset.q; const [, , ans, why] = QUIZ[i];
+    qEl.querySelectorAll('.opts button').forEach(b => b.addEventListener('click', () => {
+      if (qEl.dataset.done) return; qEl.dataset.done = '1'; n++;
+      const k = +b.dataset.k;
+      if (k === ans) { b.classList.add('right'); c++; } else { b.classList.add('wrong'); qEl.querySelector(`[data-k="${ans}"]`).classList.add('right'); }
+      const w = qEl.querySelector('.why'); w.hidden = false; w.textContent = why;
+      $('#qz-n').textContent = `${n} / ${QUIZ.length}`; $('#qz-c').textContent = c;
+    }));
+  });
+}
+
+/* =====================================================================
+ * RENDER LOOP
+ * =================================================================== */
+const clock = new THREE.Clock();
+const perf = { frames: 0, acc: 0, step: 0, first: true };
+function adaptQuality(dt) {
+  perf.frames++; perf.acc += dt;
+  if (perf.frames < 45) return;
+  const avg = perf.acc / perf.frames; perf.frames = 0; perf.acc = 0;
+  if (avg > 0.045 && perf.step === 0) { perf.step = 1; pixelRatioCap = 1; renderer.setPixelRatio(1); resize(); }
+  else if (avg > 0.045 && perf.step === 1) { perf.step = 2; renderer.shadowMap.enabled = false; scene.traverse(o => { if (o.material) o.material.needsUpdate = true; }); }
+}
+const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(1, 1, 1), _d = new THREE.Vector3();
+let chartTimer = 0;
+A.b0on = 1;
+function animate() {
+  const dt = Math.min(clock.getDelta(), 0.1);
+  const t = clock.elapsedTime;
+  if (S.paused) { requestAnimationFrame(animate); return; }
+  adaptQuality(dt);
+  controls.update();
+  applyLayers(t);
+
+  // field arrows flow
+  if (field.visible) {
+    const set = A.shielded ? 'shielded' : 'unshielded';
+    const speed = A.quenchB != null ? 0.05 * (A.quenchB / S.B0) : 0.05;
+    for (const fa of flowArrows[set]) { fa.u = (fa.u + dt * speed * (2.4 / fa.info.len)) % 1; const { p, dir } = pointAt(fa.info, fa.u); fa.m.position.copy(p); fa.m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir); }
+  }
+  // superconducting coil current glow
+  const coilsL = layers.find(l => l.id === 'coils');
+  if (coilsL) { const k = A.quenchB != null ? A.quenchB / S.B0 : 1; for (const m of coilsL.coilMats) { m.emissive.set('#ff9a5a'); m.emissiveIntensity = (CH[S.chapter].field ? 0.18 + 0.1 * Math.sin(t * 2.4) : 0.02) * k; } for (const m of coilsL.shieldMats) { m.emissive.set('#b28cff'); m.emissiveIntensity = (CH[S.chapter].field ? 0.14 : 0.02) * k; } }
+
+  // gradient wires
+  const gL = layers.find(l => l.id === 'gradient');
+  if (gL) for (const ax of ['x', 'y', 'z']) {
+    const active = (A.gradOn && ax === A.gradAxis) || (A.slice && ax === 'z') || (A.kspace && ks.playing);
+    const pulse = active ? 0.4 + 0.6 * Math.max(0, Math.sin(t * (A.kspace ? 14 : 5) + (ax === 'x' ? 0 : ax === 'y' ? 2 : 4))) : 0.12;
+    for (const m of gL.wires[ax]) m.emissiveIntensity = pulse;
+  }
+  // RF birdcage
+  const rfL = layers.find(l => l.id === 'rf');
+  if (rfL) for (const r of rfL.rungs) r.m.emissiveIntensity = A.rf === 'tx' ? Math.max(0, Math.cos(r.phi - t * 3)) * 1.4 : 0;
+  headCoilMats.forEach((m, k) => { m.emissiveIntensity = A.rf === 'rx' ? 0.25 + 0.35 * Math.max(0, Math.sin(t * 5 + k)) : 0; });
+
+  // spins
+  if (spinGroup.visible) {
+    if (A.spins === 'align') {
+      let net = new THREE.Vector3();
+      spins.forEach((s, i) => {
+        const cone = 0.955; // ~54.7°
+        const dirAligned = new THREE.Vector3(Math.sin(cone) * Math.cos(s.phase + t * 2.2), Math.sin(cone) * Math.sin(s.phase + t * 2.2), Math.cos(cone));
+        if (!s.up) { dirAligned.z *= -1; dirAligned.x *= -1; }
+        const rnd = s.rnd.clone().applyAxisAngle(new THREE.Vector3(0, 0, 1), t * 0.3 + s.wobble).applyAxisAngle(new THREE.Vector3(1, 0, 0), t * 0.2);
+        _d.copy(rnd).lerp(dirAligned, A.b0on).normalize();
+        net.add(_d);
+        _q.setFromUnitVectors(UP, _d);
+        _m.compose(s.p, _q, _s); spinMesh.setMatrixAt(i, _m);
+      });
+      spinMesh.instanceMatrix.needsUpdate = true;
+      net.divideScalar(spins.length);
+      pointArrow(netArrow, new THREE.Vector3(0, 0, Math.max(0.0001, net.z)));
+      setArrowLength(netArrow, Math.max(0, net.z) * 1.6);
+      netArrow.userData.tag.visible = net.z > 0.05;
+      trail.geometry.setDrawRange(0, 0);
+    } else if (A.spins === 'bloch') {
+      const r = blochVector(dt);
+      pointArrow(netArrow, r.m); setArrowLength(netArrow, 0.3 * Math.hypot(r.mz, r.mxy));
+      netArrow.userData.tag.visible = true;
+      b1Arrow.visible = !!r.b1;
+      if (r.b1) { pointArrow(b1Arrow, r.b1); setArrowLength(b1Arrow, 0.22); }
+      trailPts.push(r.m.clone().multiplyScalar(0.3 * Math.hypot(r.mz, r.mxy) / Math.max(1e-6, r.m.length())));
+      if (trailPts.length > 600) trailPts.shift();
+      const arr = trail.geometry.attributes.position.array;
+      trailPts.forEach((p, i) => { arr[i * 3] = p.x; arr[i * 3 + 1] = p.y; arr[i * 3 + 2] = p.z; });
+      trail.geometry.attributes.position.needsUpdate = true; trail.geometry.setDrawRange(0, trailPts.length);
+      if ($('#mz-v')) { $('#mz-v').textContent = fmt(r.mz); $('#mxy-v').textContent = fmt(r.mxy); }
+      chartTimer += dt; if (chartTimer > 0.1) { chartTimer = 0; drawBlochChart(); }
+    } else if (A.spins === 'tissue') {
+      // repeated 90° pulses every TR; arrows show Mz recovery and Mxy at the current time
+      contrast.t += dt * 1000 * Math.max(0.6, contrast.TR / 2500);
+      const tt = contrast.t % contrast.TR;
+      for (const ta of tissueArrows) {
+        const tis = P.TISSUES[ta.key];
+        // Steady state with a 90° pulse every TR: Mz regrows from 0; the transverse signal starts at the Mz available before the pulse.
+        const mss = 1 - Math.exp(-contrast.TR / tis.t1);
+        const mz = (1 - Math.exp(-tt / tis.t1)) * tis.pd;
+        const mxy = mss * Math.exp(-tt / tis.t2) * tis.pd;
+        const dir = new THREE.Vector3(mxy * Math.cos(t * 3), mxy * Math.sin(t * 3), mz);
+        pointArrow(ta.arrow, dir); setArrowLength(ta.arrow, 0.34 * Math.max(0.06, dir.length()));
+        const te = Math.abs(tt - contrast.TE) < 25 * Math.max(0.6, contrast.TR / 2500);
+        ta.tag.element.style.textShadow = te ? '0 0 10px #fff' : 'none';
+      }
+    }
+  }
+  // quench
+  if (plume.visible) stepQuench(dt);
+  // k-space acquisition
+  if (A.kspace && ks.playing) {
+    ks.lastStep += dt;
+    if (ks.lastStep > 0.03) { const add = 2 * Math.max(1, Math.floor(ks.lastStep / 0.03)); ks.lastStep = 0; ks.rows = Math.min(ks.N, ks.rows + add); drawK(); if (ks.rows >= ks.N) { ks.playing = false; $('#ks-play') && ($('#ks-play').textContent = 'Acquire again'); } }
+  }
+  boreLight.intensity = A.rf === 'tx' ? 0.5 + 0.3 * Math.sin(t * 6) : 0.4;
+
+  renderer.render(scene, camera);
+  labelRenderer.render(scene, camera);
+  if (perf.first) { perf.first = false; const l = $('#loading'); gsap.to(l, { opacity: 0, duration: D(0.4), onComplete: () => { l.hidden = true; } }); }
+  requestAnimationFrame(animate);
+}
+
+function resize() {
+  const r = stage.getBoundingClientRect();
+  const w = Math.max(1, r.width), h = Math.max(1, r.height);
+  renderer.setSize(w, h, false); labelRenderer.setSize(w, h);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+
+/* =====================================================================
+ * BOOT
+ * =================================================================== */
+buildScanner();
+markOwnEmissive();
+buildPatient();
+buildEquipment();
+buildField();
+buildSpins();
+buildGradientViz();
+placeGradPlane('z');
+buildShim();
+buildPlume();
+spinGroup.visible = false; gradPlane.visible = false; slab.visible = false; shimSphere.visible = false; freqTags.forEach(f => f.t.visible = false);
+new ResizeObserver(resize).observe(stage);
+resize();
+const startAt = (() => { const m = /^#ch(\d+)$/.exec(location.hash || ''); return m ? clamp(+m[1] - 1, 0, CH.length - 1) : 0; })();
+go(startAt);
+requestAnimationFrame(animate);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { drawBlochChart(); });
+/* =====================================================================
+ * EMBED BRIDGE — messages from the MRISafe Twin shell (controller, keys, AI)
+ * =================================================================== */
+function postChapter() {
+  const c = CH[S.chapter];
+  const notes = (contentEl.innerText || '').replace(/\s+\n/g, '\n').replace(/\n{3,}/g, '\n\n').slice(0, 2200);
+  post('chapter', { index: S.chapter, count: CH.length, title: c.title, group: c.group, notes });
+}
+const _sph = new THREE.Spherical();
+function orbitBy(dAz, dEl) {
+  if (camTween) { camTween.kill(); camTween = null; }
+  const off = camera.position.clone().sub(controls.target);
+  _sph.setFromVector3(off);
+  _sph.theta += dAz;
+  _sph.phi = clamp(_sph.phi - dEl, 0.12, Math.PI - 0.12);
+  off.setFromSpherical(_sph);
+  camera.position.copy(controls.target).add(off);
+}
+function chapterAction() {
+  const b = contentEl.querySelector('#pulse, #as-next, #ks-play, #q-go, .btn.primary');
+  if (b) b.click();
+}
+function onPad(id) {
+  if (id === 'T1') go(S.chapter - 1);
+  else if (id === 'T2') go(S.chapter + 1);
+  else if (id === 'T3') setLayers(clamp(layerState.peel + 1, 0, 8), layerState.explode, 0.5);
+  else if (id === 'T4') setLayers(clamp(layerState.peel - 1, 0, 8), layerState.explode, 0.5);
+  else if (id === 'T5') setLayers(layerState.peel, layerState.explode > 0.3 ? 0 : 0.7, 0.9);
+  else if (id === 'T6') $('#t-reset').click();
+}
+function zoomBy(dz) {
+  // dz > 0 is a zoom in (palms apart). Distance scales exponentially so the feel is even at any range.
+  if (camTween) { camTween.kill(); camTween = null; }
+  const off = camera.position.clone().sub(controls.target);
+  off.setLength(clamp(off.length() * Math.exp(-dz * 1.3), controls.minDistance, controls.maxDistance));
+  camera.position.copy(controls.target).add(off);
+}
+window.addEventListener('message', e => {
+  if (e.origin !== location.origin || !e.data || e.data.mrisafe !== 1) return;
+  const d = e.data;
+  switch (d.kind) {
+    case 'orbit': orbitBy(d.dAz || 0, d.dEl || 0); break;
+    case 'zoom': zoomBy(+d.dz || 0); break;
+    case 'pad': onPad(d.id); break;
+    case 'nav': go(S.chapter + (d.dir > 0 ? 1 : -1)); break;
+    case 'action': chapterAction(); break;
+    case 'reset-view': $('#t-reset').click(); break;
+    case 'goto': go(+d.index || 0); break;
+    case 'visible': S.paused = !d.visible; break;
+    case 'key': window.dispatchEvent(new KeyboardEvent('keydown', { key: d.key })); break;
+    case 'hello': postChapter(); break;
+  }
+});
+post('ready', { page: 'learn' });
+window.__internals = { go, CH, layers, ks, bloch, contrast, sliceS, orbitBy, zoomBy, onPad, camDistance: () => camera.position.distanceTo(controls.target) };
+</script>
+</body>
+</html>

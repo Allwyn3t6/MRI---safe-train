@@ -1,0 +1,3224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MRISafe Twin</title>
+<script>if (/[?&]embed/.test(location.search)) document.documentElement.classList.add('embed');</script>
+<meta name="description" content="MRI safety digital twin with ESP32-S3 touch input and a rule-based assessor.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* MRISafe Twin shared colour tokens. Dark is the default; light is set by data-theme="light"
+ * on <html> (theme.js). Pages keep their own dark token values in :root; the light block
+ * below uses a higher-specificity selector, so it wins regardless of load order. */
+
+:root {
+  /* extra surfaces used by every page (dark values) */
+  --well: #0a121c;
+  --bg-deep: #071019;
+  --header-grad: linear-gradient(180deg, #0b1320, #08101a);
+  --card-grad: linear-gradient(160deg, #10243a, #0d1826 60%);
+  --stage-grad: radial-gradient(120% 90% at 50% 10%, #12233a 0%, #08111c 60%, #060b12 100%);
+  --glass: rgba(12, 20, 32, 0.82);
+  --glass-strong: rgba(6, 12, 20, 0.92);
+  --tag-bg: rgba(8, 15, 25, 0.82);
+  --overlay: rgba(4, 8, 13, 0.72);
+  --toast-bg: #0f1c2b;
+  --hint-bg: rgba(10, 22, 34, 0.9);
+  --hint-text: #ffe2b0;
+  --ok-text: #9fe6c6;
+  --warn-text: #ffd9a3;
+  --scene-bg: #070c14;
+  --shadow: rgba(0, 0, 0, 0.45);
+  --text-soft: #c2d0de;
+  --card-top: #10243a;
+  --rule-text: #ffb3bb;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eef2f6;
+  --panel: #ffffff;
+  --raised: #f5f8fb;
+  --raised-2: #e6edf5;
+  --line: rgba(20, 50, 80, 0.12);
+  --line-strong: rgba(20, 50, 80, 0.26);
+  --text: #13212f;
+  --muted: #4f6478;
+  --faint: #76889c;
+  --cyan: #0a7790;
+  --cyan-dim: rgba(10, 119, 144, 0.10);
+  --blue: #2f64d6;
+  --ok: #17845a;
+  --ok-dim: rgba(23, 132, 90, 0.11);
+  --warn: #9c6400;
+  --warn-dim: rgba(156, 100, 0, 0.12);
+  --bad: #c4283a;
+  --bad-dim: rgba(196, 40, 58, 0.10);
+
+  --well: #e7eef5;
+  --bg-deep: #dde6ee;
+  --header-grad: linear-gradient(180deg, #ffffff, #f1f5f9);
+  --card-grad: linear-gradient(160deg, #e2f1f6, #f7fbfd 60%);
+  --stage-grad: radial-gradient(120% 90% at 50% 10%, #ffffff 0%, #e6edf4 65%, #d9e3ec 100%);
+  --glass: rgba(255, 255, 255, 0.9);
+  --glass-strong: rgba(255, 255, 255, 0.96);
+  --tag-bg: rgba(255, 255, 255, 0.92);
+  --overlay: rgba(30, 45, 60, 0.35);
+  --toast-bg: #ffffff;
+  --hint-bg: rgba(255, 250, 240, 0.97);
+  --hint-text: #6b4300;
+  --ok-text: #0d6a45;
+  --warn-text: #7a4d00;
+  --scene-bg: #e4ebf2;
+  --shadow: rgba(20, 40, 60, 0.18);
+  --text-soft: #3b4f63;
+  --card-top: #e2f1f6;
+  --rule-text: #a3202f;
+}
+
+/* Replace-the-dark-literal helpers used in the page CSS */
+:root[data-theme="light"] .brand h1 span { color: var(--cyan); }
+:root[data-theme="light"] .pad .pname { color: #f3dccb; }
+
+</style>
+<script>
+/* MRISafe Twin theme switch: dark (default) or light, shared by the shell and both modules.
+ * The choice is stored in this browser only (localStorage). Other same-origin frames pick it
+ * up through the storage event, and every page listens for the 'mrisafe-theme' event so
+ * the 3D scene can repaint its background. */
+(function () {
+  const KEY = 'mrisafe-theme';
+  const root = document.documentElement;
+
+  function stored() {
+    try { return localStorage.getItem(KEY); } catch (e) { return null; }
+  }
+  function save(v) {
+    try { localStorage.setItem(KEY, v); } catch (e) { /* storage blocked: theme still applies for this page */ }
+  }
+  function current() { return stored() === 'light' ? 'light' : 'dark'; }
+
+  function paintButtons(v) {
+    document.querySelectorAll('[data-theme-toggle]').forEach(b => {
+      b.textContent = v === 'dark' ? 'Light' : 'Dark';
+      b.setAttribute('aria-pressed', String(v === 'light'));
+      b.title = v === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme';
+    });
+  }
+
+  function apply(v) {
+    root.setAttribute('data-theme', v);
+    root.style.colorScheme = v;
+    paintButtons(v);
+    window.dispatchEvent(new CustomEvent('mrisafe-theme', { detail: v }));
+  }
+
+  function set(v) { save(v); apply(v); }
+  function toggle() { set(current() === 'dark' ? 'light' : 'dark'); }
+
+  window.MRITheme = { get: current, set, toggle };
+  apply(current());
+  document.addEventListener('DOMContentLoaded', () => paintButtons(current()));
+  window.addEventListener('storage', e => { if (e.key === KEY) apply(current()); });
+  document.addEventListener('click', e => {
+    const b = e.target.closest && e.target.closest('[data-theme-toggle]');
+    if (b) toggle();
+  });
+})();
+
+</script>
+<style>
+/* Layout: control-room console — procedure rail | live 3D suite with copper pad strip | assessor + inspector. Single dark theme by design. */
+:root {
+  color-scheme: dark;
+  --bg: #070c14;
+  --panel: #0c1420;
+  --raised: #121d2c;
+  --raised-2: #182637;
+  --line: rgba(130, 180, 230, 0.13);
+  --line-strong: rgba(130, 190, 240, 0.26);
+  --text: #dbe6f1;
+  --muted: #8297ad;
+  --faint: #56697e;
+  --cyan: #45d6ec;
+  --cyan-dim: rgba(69, 214, 236, 0.14);
+  --blue: #5b8cff;
+  --ok: #3fd99a;
+  --ok-dim: rgba(63, 217, 154, 0.13);
+  --warn: #f4b549;
+  --warn-dim: rgba(244, 181, 73, 0.13);
+  --bad: #ff5f6f;
+  --bad-dim: rgba(255, 95, 111, 0.14);
+  --copper: #d08a5a;
+  --copper-hi: #f1b689;
+  --f-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --r: 12px;
+}
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 var(--f-body); font-stretch: 100%; -webkit-font-smoothing: antialiased; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+img { max-width: 100%; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; border-radius: 6px; }
+.mono { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+.eyebrow { font-family: var(--f-mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+h1, h2, h3 { margin: 0; font-family: var(--f-display); text-wrap: balance; }
+
+.app { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100%; min-height: 560px; }
+
+/* ---------- header ---------- */
+header.top {
+  display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+  border-bottom: 1px solid var(--line); background: var(--header-grad);
+  flex-wrap: nowrap; min-width: 0;
+}
+@media (max-width: 1600px) { .brand .sub, .field .eyebrow.sc-lbl { display: none; } }
+@media (max-width: 1420px) { #conn-text { max-width: 190px; overflow: hidden; text-overflow: ellipsis; } }
+@media (max-width: 980px) { header.top { flex-wrap: wrap; } }
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brand svg { flex: none; }
+.brand h1 { font-size: 17px; font-weight: 750; font-stretch: 112%; letter-spacing: .01em; white-space: nowrap; }
+.brand h1 span { color: var(--cyan); }
+.brand .sub { font-size: 11px; color: var(--muted); font-family: var(--f-mono); }
+nav.tabs { display: flex; gap: 4px; padding: 3px; border-radius: 10px; background: var(--raised); border: 1px solid var(--line); }
+nav.tabs a { text-decoration: none; color: var(--muted); font-size: 13px; font-weight: 600; padding: 6px 12px; border-radius: 7px; white-space: nowrap; }
+nav.tabs a[aria-current="page"] { background: var(--cyan-dim); color: var(--cyan); }
+nav.tabs a:hover { color: var(--text); }
+.top .spacer { flex: 1; }
+.chip { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 11px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--raised); font-size: 12.5px; white-space: nowrap; }
+.chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); box-shadow: 0 0 0 3px rgba(255,255,255,.04); }
+.chip[data-tone="ok"] .dot { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-dim); }
+.chip[data-tone="warn"] .dot { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-dim); }
+.chip[data-tone="bad"] .dot { background: var(--bad); box-shadow: 0 0 0 3px var(--bad-dim); }
+.chip[data-tone="busy"] .dot { background: var(--cyan); animation: blink 1s infinite; }
+@keyframes blink { 50% { opacity: .25; } }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 32px; padding: 0 13px; border-radius: 9px; border: 1px solid var(--line-strong); background: var(--raised); cursor: pointer; font-size: 13px; font-weight: 550; transition: background .15s, border-color .15s, transform .1s; white-space: nowrap; }
+.btn:hover { background: var(--raised-2); border-color: rgba(130,190,240,.4); }
+.btn:active { transform: translateY(1px); }
+.btn.primary { background: linear-gradient(180deg, #2bb8d0, #1f93ad); border-color: #4fd8ee; color: #04121a; }
+.btn.primary:hover { background: linear-gradient(180deg, #3ccbe2, #22a1bc); }
+.btn.ghost { background: transparent; }
+.btn.small { height: 28px; padding: 0 10px; font-size: 12px; }
+.btn[disabled] { opacity: .45; cursor: not-allowed; }
+select.sel { height: 32px; border-radius: 9px; border: 1px solid var(--line-strong); background: var(--raised); color: var(--text); padding: 0 30px 0 11px; font: 13px var(--f-body); appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 15px) 14px, calc(100% - 10px) 14px; background-size: 5px 5px; background-repeat: no-repeat; }
+.score-chip { font-family: var(--f-mono); }
+.score-chip b { font-size: 15px; }
+
+/* ---------- main grid ---------- */
+main.grid { display: grid; grid-template-columns: 286px minmax(0, 1fr) 368px; gap: 10px; padding: 10px 12px 12px; min-height: 0; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); min-height: 0; display: flex; flex-direction: column; }
+.panel-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px 8px; }
+.panel-b { padding: 0 14px 14px; min-height: 0; }
+.scroll { overflow: auto; scrollbar-width: thin; scrollbar-color: #24364b transparent; }
+
+/* ---------- procedure rail ---------- */
+.rail { gap: 0; }
+.scenario-card { margin: 0 14px 10px; padding: 12px; border-radius: 10px; background: var(--card-grad); border: 1px solid var(--line-strong); }
+.scenario-card h2 { font-size: 16px; font-weight: 700; font-stretch: 108%; }
+.scenario-card p { margin: 4px 0 8px; color: var(--muted); font-size: 12.5px; }
+.level { display: inline-flex; gap: 4px; vertical-align: middle; }
+.level i { width: 14px; height: 4px; border-radius: 2px; background: #22364d; }
+.level i.on { background: var(--cyan); }
+.meta-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--muted); }
+.progress { height: 6px; border-radius: 3px; background: var(--raised-2); overflow: hidden; margin-top: 10px; }
+.progress > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--cyan), var(--ok)); border-radius: 3px; }
+ol.cps { list-style: none; margin: 0; padding: 0 10px 10px; display: flex; flex-direction: column; gap: 6px; }
+.cp { display: grid; grid-template-columns: 34px minmax(0,1fr) 22px; gap: 10px; align-items: start; padding: 10px; border-radius: 10px; border: 1px solid transparent; background: transparent; position: relative; }
+.cp .key { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; font: 600 12px var(--f-mono); color: var(--copper-hi); background: linear-gradient(145deg, #3a2618, #241810); border: 1px solid rgba(208,138,90,.45); }
+.cp b { display: block; font-size: 13.5px; font-weight: 650; }
+.cp small { display: block; color: var(--muted); font-size: 12px; margin-top: 1px; }
+.cp .state { width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid #2d4258; display: grid; place-items: center; margin-top: 6px; }
+.cp .state svg { width: 12px; height: 12px; }
+.cp[data-state="active"] { background: var(--cyan-dim); border-color: rgba(69,214,236,.35); }
+.cp[data-state="active"] .state { border-color: var(--cyan); }
+.cp[data-state="done"] .state { background: var(--ok); border-color: var(--ok); color: #04150d; }
+.cp[data-state="done"] b { color: var(--ok-text); }
+.cp[data-state="blocked"] { opacity: .62; }
+.cp .flag { position: absolute; top: 8px; right: 38px; font: 600 10.5px var(--f-mono); color: var(--warn); background: var(--warn-dim); padding: 1px 6px; border-radius: 6px; }
+.req { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 2px; font-size: 12px; }
+.req li { display: flex; gap: 6px; color: var(--muted); }
+.req li.ok { color: var(--ok-text); }
+.req li::before { content: "○"; font-family: var(--f-mono); }
+.req li.ok::before { content: "✓"; }
+.rail-foot { margin-top: auto; padding: 10px 14px 14px; border-top: 1px solid var(--line); display: grid; gap: 8px; }
+.kbd { font: 11px var(--f-mono); padding: 1px 5px; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 5px; color: var(--muted); }
+.legend { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 4px 10px; font-size: 11.5px; color: var(--muted); }
+
+/* ---------- stage ---------- */
+.stage { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 10px; min-height: 0; min-width: 0; }
+.viewport { position: relative; border-radius: var(--r); overflow: hidden; border: 1px solid var(--line); background: var(--stage-grad); min-height: 320px; }
+#scene { position: absolute; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; }
+#labels { position: absolute; inset: 0; pointer-events: none; }
+.vp-tools { position: absolute; top: 12px; right: 12px; display: flex; gap: 6px; z-index: 3; }
+.vp-tools .btn { background: var(--glass); backdrop-filter: blur(6px); }
+.vp-tools .btn[aria-pressed="true"] { border-color: var(--cyan); color: var(--cyan); }
+.stamp { position: absolute; left: 12px; bottom: 12px; z-index: 3; font: 500 10.5px var(--f-mono); letter-spacing: .12em; color: var(--muted); background: var(--glass); border: 1px dashed var(--line-strong); padding: 5px 9px; border-radius: 6px; pointer-events: none; }
+.hint-bar { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); z-index: 3; display: flex; align-items: center; gap: 10px; max-width: min(560px, calc(100% - 180px)); padding: 8px 14px; border-radius: 10px; background: var(--hint-bg); border: 1px solid rgba(244,181,73,.5); color: var(--hint-text); font-size: 13px; box-shadow: 0 8px 30px rgba(0,0,0,.35); }
+.hint-bar .eyebrow { color: var(--warn); }
+.hover-tip { position: absolute; z-index: 4; pointer-events: none; padding: 5px 9px; border-radius: 7px; background: var(--glass-strong); border: 1px solid var(--line-strong); font-size: 12px; white-space: nowrap; transform: translate(12px, 12px); }
+.loading { position: absolute; inset: 0; display: grid; place-items: center; z-index: 5; background: var(--bg); color: var(--muted); font: 12px var(--f-mono); letter-spacing: .1em; }
+.loading .ring { width: 54px; height: 54px; border-radius: 50%; border: 2px solid #1d3047; border-top-color: var(--cyan); animation: spin 1s linear infinite; margin: 0 auto 12px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.tag3d { font: 600 11px var(--f-body); color: var(--text); background: var(--tag-bg); border: 1px solid var(--line-strong); padding: 3px 8px; border-radius: 6px; white-space: nowrap; display: flex; gap: 6px; align-items: center; transform: translateY(-4px); }
+.tag3d.zone { background: transparent; border: none; font: 600 10.5px var(--f-mono); letter-spacing: .14em; color: var(--muted); }
+.tag3d .cl { font: 600 10px var(--f-mono); padding: 1px 5px; border-radius: 4px; }
+.cl.MR_SAFE { background: var(--ok-dim); color: var(--ok); }
+.cl.MR_CONDITIONAL { background: var(--warn-dim); color: var(--warn); }
+.cl.MR_UNSAFE { background: var(--bad-dim); color: var(--bad); }
+
+/* ---------- pad strip ---------- */
+.pads { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; padding: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); }
+.pad { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; padding: 9px 10px 9px 12px; border-radius: 10px; cursor: pointer; text-align: left;
+  background: linear-gradient(150deg, #2b1c12 0%, #1a120c 100%); border: 1px solid rgba(208,138,90,.42); transition: border-color .15s; overflow: hidden; }
+.pad::after { content: ""; position: absolute; inset: 0; background: radial-gradient(120% 140% at 0% 0%, rgba(241,182,137,.18), transparent 55%); pointer-events: none; }
+.pad:hover { border-color: var(--copper-hi); }
+.pad .pid { font: 600 12px var(--f-mono); color: var(--copper-hi); }
+.pad .pev { font: 500 10px var(--f-mono); color: #c59674; letter-spacing: .04em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.pad .pname { font-size: 12.5px; font-weight: 650; color: #f3dccb; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.pad .glow { position: absolute; inset: -1px; border-radius: 10px; box-shadow: 0 0 0 2px var(--cyan), 0 0 24px rgba(69,214,236,.55) inset; opacity: 0; pointer-events: none; }
+.pad.reset { background: linear-gradient(150deg, #1d1c22, #131318); border-color: rgba(160,160,180,.35); }
+.pad.reset .pid, .pad.reset .pname { color: #c8c8d6; }
+.pad.hinted { border-color: var(--warn); box-shadow: 0 0 0 2px rgba(244,181,73,.3); }
+
+/* ---------- right column ---------- */
+.side { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 10px; min-height: 0; }
+.assessor .panel-b { display: grid; gap: 8px; }
+.fb { border-radius: 10px; padding: 12px; border: 1px solid var(--line); background: var(--raised); }
+.fb .fb-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fb .sev { font: 600 10.5px var(--f-mono); letter-spacing: .08em; padding: 2px 7px; border-radius: 5px; text-transform: uppercase; }
+.fb h3 { font-size: 14.5px; font-weight: 700; margin-top: 6px; line-height: 1.3; }
+.fb dl { margin: 8px 0 0; display: grid; gap: 7px; }
+.fb dt { font: 600 10px var(--f-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.fb dd { margin: 1px 0 0; font-size: 12.8px; }
+.fb .basis { margin-top: 8px; font-size: 11px; color: var(--faint); }
+.fb.critical { border-color: rgba(255,95,111,.55); background: linear-gradient(160deg, rgba(255,95,111,.12), var(--raised) 55%); }
+.fb.critical .sev { background: var(--bad); color: #2a0509; }
+.fb.major { border-color: rgba(244,181,73,.5); background: linear-gradient(160deg, rgba(244,181,73,.10), var(--raised) 55%); }
+.fb.major .sev { background: var(--warn); color: #2b1a00; }
+.fb.minor .sev { background: #7c8da1; color: #0b121a; }
+.fb.ok { border-color: rgba(63,217,154,.45); background: linear-gradient(160deg, rgba(63,217,154,.10), var(--raised) 55%); }
+.fb.ok .sev { background: var(--ok); color: #03170e; }
+.fb.info .sev { background: #2a3d52; color: var(--text); }
+.fb .pts { margin-left: auto; font: 600 12px var(--f-mono); color: var(--bad); }
+.fb.idle p { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+
+.inspector .panel-b { display: flex; flex-direction: column; gap: 12px; }
+.insp-title { display: flex; gap: 12px; align-items: flex-start; }
+.insp-title h2 { font-size: 17px; font-weight: 700; font-stretch: 105%; }
+.insp-title p { margin: 2px 0 0; color: var(--muted); font-size: 12.5px; }
+.kv { display: grid; grid-template-columns: 110px minmax(0,1fr); gap: 5px 10px; font-size: 12.8px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; }
+.section-label { font: 600 10.5px var(--f-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.seg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.seg button { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 4px; border-radius: 9px; border: 1px solid var(--line-strong); background: var(--raised); cursor: pointer; font-size: 11.5px; font-weight: 600; }
+.seg button[aria-pressed="true"] { border-color: var(--cyan); background: var(--cyan-dim); }
+.seg button:hover { background: var(--raised-2); }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.labelbox { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 10px; background: var(--well); border: 1px dashed var(--line-strong); font-size: 12.8px; }
+.labelbox.none { color: var(--warn); }
+.idcmp { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
+.idcmp > div { padding: 9px; border-radius: 9px; background: var(--well); border: 1px solid var(--line); font-size: 12px; }
+.idcmp b { display: block; font: 600 10px var(--f-mono); letter-spacing: .1em; color: var(--muted); text-transform: uppercase; margin-bottom: 3px; }
+.form-tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.form-tbl td { padding: 6px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.form-tbl td:last-child { text-align: right; font-weight: 600; }
+.form-tbl tr.flag td { color: var(--warn-text); }
+.choice { display: grid; gap: 6px; }
+.choice button { text-align: left; padding: 9px 11px; border-radius: 9px; border: 1px solid var(--line-strong); background: var(--raised); cursor: pointer; font-size: 12.8px; }
+.choice button:hover { background: var(--raised-2); border-color: var(--cyan); }
+.done-line { display: flex; align-items: center; gap: 8px; color: var(--ok-text); font-size: 12.8px; }
+.empty-insp { color: var(--muted); font-size: 13px; display: grid; gap: 10px; }
+.empty-insp ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+
+.log .panel-b { padding: 0 8px 8px; }
+.log ol { list-style: none; margin: 0; padding: 0; max-height: 168px; overflow: auto; font: 11.5px/1.35 var(--f-mono); }
+.log li { display: grid; grid-template-columns: 34px 44px 38px minmax(0,1fr) auto; gap: 6px; align-items: center; padding: 4px 6px; border-radius: 6px; }
+.log li:nth-child(odd) { background: rgba(255,255,255,.02); }
+.log .ev { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log .src { color: var(--muted); }
+.st { font-size: 10px; padding: 1px 5px; border-radius: 4px; white-space: nowrap; display: inline-block; }
+.st.acc { background: var(--ok-dim); color: var(--ok); }
+.st.cpd { background: var(--ok); color: #03170e; }
+.st.vio { background: var(--bad-dim); color: var(--bad); }
+.st.blk { background: #1d2a3a; color: var(--muted); }
+.st.inv { background: #2a1b2e; color: #d59de4; }
+
+/* ---------- overlays ---------- */
+.sheet { position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; background: var(--overlay); backdrop-filter: blur(4px); }
+.sheet-inner { margin: 18px auto 0; width: min(1240px, calc(100% - 32px)); flex: 1; min-height: 0; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 16px 16px 0 0; display: flex; flex-direction: column; box-shadow: 0 -20px 60px rgba(0,0,0,.5); }
+.sheet-head { display: flex; align-items: center; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.sheet-head h2 { font-size: 20px; font-weight: 750; font-stretch: 110%; }
+.sheet-body { padding: 18px 20px 28px; overflow: auto; display: grid; gap: 22px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.tile { padding: 12px 14px; border-radius: 10px; background: var(--raised); border: 1px solid var(--line); }
+.tile .v { font: 600 22px var(--f-mono); margin-top: 4px; }
+.tile .s { font-size: 12px; color: var(--muted); }
+.tbl-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+table.data { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+table.data th { text-align: left; font: 600 10.5px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 9px 10px; background: var(--well); border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.data td { padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.data td.mono { white-space: nowrap; }
+table.data tr:last-child td { border-bottom: none; }
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
+.note { font-size: 12px; color: var(--muted); }
+.field { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+.field input { height: 30px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--raised); color: var(--text); padding: 0 10px; font: 13px var(--f-body); }
+textarea.copybox { width: 100%; height: 140px; background: var(--well); color: var(--text); border: 1px solid var(--line-strong); border-radius: 8px; font: 11px var(--f-mono); padding: 8px; }
+.meters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.meter { padding: 8px 10px; border-radius: 8px; background: var(--raised); border: 1px solid var(--line); font: 11px var(--f-mono); }
+.meter .bar { position: relative; height: 8px; border-radius: 4px; background: var(--raised-2); margin-top: 6px; overflow: hidden; }
+.meter .bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--cyan); }
+.meter .bar b { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--warn); }
+
+.modal { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; background: var(--overlay); backdrop-filter: blur(5px); padding: 16px; }
+.modal-card { width: min(560px, 100%); background: var(--panel); border: 1px solid var(--line-strong); border-radius: 16px; padding: 22px; display: grid; gap: 14px; box-shadow: 0 30px 80px rgba(0,0,0,.55); }
+.modal-card h2 { font-size: 22px; font-weight: 750; font-stretch: 110%; }
+.result-ring { display: flex; align-items: center; gap: 16px; }
+.result-ring .big { font: 600 44px var(--f-mono); line-height: 1; }
+.verdict { font: 600 12px var(--f-mono); letter-spacing: .12em; padding: 4px 9px; border-radius: 6px; }
+.verdict.pass { background: var(--ok); color: #03170e; }
+.verdict.fail { background: var(--bad); color: #2a0509; }
+.rec { padding: 12px; border-radius: 10px; background: var(--cyan-dim); border: 1px solid rgba(69,214,236,.35); font-size: 13px; }
+.rec b { display: block; font-size: 14px; margin: 2px 0 4px; }
+
+.toast-host { position: fixed; z-index: 50; right: 16px; bottom: 16px; display: grid; gap: 8px; width: min(360px, calc(100% - 32px)); pointer-events: none; }
+.toast { pointer-events: auto; padding: 10px 12px; border-radius: 10px; background: var(--toast-bg); border: 1px solid var(--line-strong); font-size: 12.8px; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
+.toast.warn { border-color: rgba(244,181,73,.6); }
+.toast.bad { border-color: rgba(255,95,111,.6); }
+
+/* ---------- responsive ---------- */
+@media (max-width: 1260px) { main.grid { grid-template-columns: 252px minmax(0, 1fr) 330px; } .pad .pev { display: none; } }
+@media (max-width: 980px) {
+  .app { height: auto; min-height: 0; }
+  main.grid { grid-template-columns: minmax(0, 1fr); padding: 10px 16px 16px; }
+  .stage { order: 1; } .side { order: 2; } .rail { order: 3; }
+  .viewport { height: 62vh; min-height: 360px; }
+  .pads { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .log ol { max-height: 240px; }
+  .two { grid-template-columns: minmax(0, 1fr); }
+  .hint-bar { max-width: calc(100% - 24px); top: 56px; }
+}
+@media (max-width: 520px) {
+  header.top { gap: 8px; }
+  .brand .sub { display: none; }
+  .sheet-inner { width: calc(100% - 16px); margin-top: 8px; }
+  .kv { grid-template-columns: 92px minmax(0,1fr); }
+}
+html.embed .brand, html.embed nav.tabs, html.embed #conn-chip, html.embed #btn-connect { display: none !important; }
+html.embed header.top { padding: 8px 12px; }
+html.embed [data-theme-toggle] { display: none !important; }
+html.embed body { overflow: hidden; }
+.assessor .panel-b { max-height: 46vh; overflow: auto; scrollbar-width: thin; scrollbar-color: #24364b transparent; }
+.vcursor { position: absolute; z-index: 6; width: 28px; height: 28px; margin: -14px 0 0 -14px; border-radius: 50%; border: 2px solid var(--cyan); box-shadow: 0 0 0 4px rgba(69,214,236,.18), 0 0 18px rgba(69,214,236,.5); pointer-events: none; }
+.vcursor::after { content: ""; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%; background: var(--cyan); }
+.fb .ai-ask { margin-top: 10px; }
+.assessor-tools { display: flex; align-items: center; gap: 8px; }
+.fb-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+.fb-actions .note { font-size: 11.5px; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <header class="top">
+    <div class="brand">
+      <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true">
+        <rect x="1" y="3" width="32" height="28" rx="9" fill="#e9eef3"/>
+        <circle cx="17" cy="16" r="8.5" fill="#1b2633"/>
+        <circle cx="17" cy="16" r="9.6" fill="none" stroke="#45d6ec" stroke-width="1.2"/>
+        <circle cx="17" cy="16" r="5" fill="#0a1018"/>
+      </svg>
+      <div>
+        <h1>MRISafe <span>Twin</span></h1>
+        <div class="sub">MRI safety trainer · rule-based assessor</div>
+      </div>
+    </div>
+    <nav class="tabs" aria-label="Modules">
+      <a href="./index.html">Home</a>
+      <a href="./trainer.html" aria-current="page">Safety trainer</a>
+      <a href="./internals.html">Inside the scanner</a>
+    </nav>
+    <div class="spacer"></div>
+    <label class="field" for="scenario-select"><span class="eyebrow sc-lbl">Scenario</span>
+      <select id="scenario-select" class="sel"></select>
+    </label>
+    <span class="chip score-chip" id="score-chip" title="Score for this attempt"><span class="eyebrow">Score</span> <b id="score-val">100</b></span>
+    <span class="chip mono" id="timer-chip" title="Attempt time">00:00</span>
+    <span class="chip" id="conn-chip" data-tone="off" role="status" aria-live="polite"><span class="dot"></span><span id="conn-text">No device · keys 1–6 active</span></span>
+    <button class="btn small" type="button" data-theme-toggle aria-pressed="false">Light</button>
+    <button class="btn primary" id="btn-connect" type="button">Connect ESP32-S3</button>
+    <button class="btn" id="btn-trainer" type="button">Trainer view <span class="kbd">T</span></button>
+  </header>
+
+  <main class="grid">
+    <!-- Procedure rail -->
+    <section class="panel rail" aria-label="Procedure">
+      <div class="panel-h"><span class="eyebrow">Procedure</span><span class="eyebrow" id="attempt-label">Attempt 1</span></div>
+      <div class="scenario-card">
+        <div class="meta-row"><span class="eyebrow" id="sc-kind">Core scenario</span><span class="level" id="sc-level"></span></div>
+        <h2 id="sc-title">Standard pre-scan</h2>
+        <p id="sc-summary"></p>
+        <div class="meta-row"><span id="sc-progress-text">0 of 5 checkpoints</span><span class="mono" id="sc-session"></span></div>
+        <div class="progress" aria-hidden="true"><i id="sc-progress"></i></div>
+      </div>
+      <ol class="cps scroll" id="cps"></ol>
+      <div class="rail-foot">
+        <button class="btn" id="btn-record" type="button">Open patient record</button>
+        <div class="legend">
+          <span><span class="kbd">1</span>–<span class="kbd">6</span> pads</span>
+          <span><span class="kbd">C</span> reset camera</span>
+          <span><span class="kbd">L</span> labels</span>
+          <span><span class="kbd">Esc</span> deselect</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3D stage -->
+    <section class="stage" aria-label="MRI suite">
+      <div class="viewport" id="viewport">
+        <canvas id="scene" aria-label="Interactive 3D MRI suite. Select objects to inspect them."></canvas>
+        <div id="labels"></div>
+        <div class="loading" id="loading"><div><div class="ring"></div>BUILDING MRI SUITE</div></div>
+        <div class="hint-bar" id="hint-bar" hidden><span class="eyebrow">Next</span><span id="hint-text"></span></div>
+        <div class="vp-tools">
+          <button class="btn small" id="btn-labels" type="button" aria-pressed="true">Labels</button>
+          <button class="btn small" id="btn-zones" type="button" aria-pressed="true">Zones</button>
+          <button class="btn small" id="btn-cam" type="button">Reset view</button>
+        </div>
+        <div class="stamp">SCHEMATIC · NOT TO SCALE · NO FIELD SIMULATION</div>
+        <div class="hover-tip" id="hover-tip" hidden></div>
+        <div class="vcursor" id="vcursor" hidden></div>
+      </div>
+      <div class="pads" id="pads" aria-label="Touch pads (mirrors the ESP32-S3 electrodes)"></div>
+    </section>
+
+    <!-- Assessor / inspector / log -->
+    <section class="side">
+      <div class="panel assessor" aria-label="Assessor feedback">
+        <div class="panel-h">
+          <span class="eyebrow">Assessor</span>
+          <span class="assessor-tools">
+            <span class="eyebrow" id="viol-count">0 violations</span>
+            <button class="btn small ghost" id="fb-toggle" type="button" aria-expanded="true" aria-controls="fb-body" title="Collapse the feedback so the procedure and inspector are visible">Hide</button>
+          </span>
+        </div>
+        <div class="panel-b" id="fb-body">
+          <div id="feedback" aria-live="assertive"></div>
+          <div class="fb-actions" id="fb-actions" hidden>
+            <button class="btn small" id="fb-log" type="button">Save to log</button>
+            <span class="note" id="fb-log-note"></span>
+          </div>
+        </div>
+      </div>
+      <div class="panel inspector" aria-label="Inspector">
+        <div class="panel-h"><span class="eyebrow">Inspector</span><button class="btn small ghost" id="btn-deselect" type="button" hidden>Close</button></div>
+        <div class="panel-b scroll" id="inspector"></div>
+      </div>
+      <div class="panel log" aria-label="Event log">
+        <div class="panel-h"><span class="eyebrow">Event log</span><span class="eyebrow" id="log-count">0 events</span></div>
+        <div class="panel-b"><ol id="log"></ol></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- Trainer dashboard -->
+<div class="sheet" id="trainer" hidden role="dialog" aria-modal="true" aria-labelledby="trainer-title">
+  <div class="sheet-inner">
+    <div class="sheet-head">
+      <div>
+        <div class="eyebrow">Trainer dashboard</div>
+        <h2 id="trainer-title">Session report</h2>
+      </div>
+      <div style="flex:1"></div>
+      <label class="field" for="trainee-name">Trainee <input id="trainee-name" value="Trainee 01" maxlength="40"></label>
+      <button class="btn small" id="exp-json" type="button">Download JSON</button>
+      <button class="btn small" id="exp-csv" type="button">Download CSV</button>
+      <button class="btn small" id="copy-json" type="button">Copy JSON</button>
+      <button class="btn small" id="copy-csv" type="button">Copy CSV</button>
+      <button class="btn small" id="ai-debrief" type="button" hidden>Debrief</button>
+      <button class="btn small" id="new-session" type="button">New session</button>
+      <button class="btn small primary" id="trainer-close" type="button">Close <span class="kbd">T</span></button>
+    </div>
+    <div class="sheet-body" id="trainer-body"></div>
+  </div>
+</div>
+
+<!-- Completion -->
+<div class="modal" id="complete" hidden role="dialog" aria-modal="true" aria-labelledby="complete-title">
+  <div class="modal-card" id="complete-card"></div>
+</div>
+
+<div class="toast-host" id="toasts" aria-live="polite"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script>
+/*
+ * MRISafe Twin — assessment engine
+ * ------------------------------------------------------------------
+ * Pure JavaScript. No DOM, no Three.js, no network.
+ * Loaded in the browser as a classic <script> (exposes window.MRIEngine)
+ * and in Node via require() for the unit tests in /tests.
+ *
+ * Contents
+ *   1. Event contract (pads, scene events, labels, zones)
+ *   2. Rule dataset (ILLUSTRATIVE — see docs/rules.md)
+ *   3. Items, patients, scenarios
+ *   4. Checkpoints and requirement checks
+ *   5. Attempt  — the deterministic state machine for one scenario run
+ *   6. Session  — a trainee session made of attempts (handles reset)
+ *   7. Adaptive scenario selection
+ *   8. Serial protocol parser + sequence tracker
+ *   9. Report export (JSON / CSV)
+ */
+(function (root, factory) {
+  const api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.MRIEngine = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+
+  /* ---------------------------------------------------------------
+   * 1. Event contract
+   * ------------------------------------------------------------- */
+  const PROTOCOL_VERSION = 1;
+
+  // Physical pads -> attestation events. Shared with firmware.
+  const PADS = [
+    { id: 'T1', gpio: 4,  event: 'SCREENING_CHECK',  short: 'Screening' },
+    { id: 'T2', gpio: 5,  event: 'VERIFY_EQUIPMENT', short: 'Equipment' },
+    { id: 'T3', gpio: 6,  event: 'ROOM_ACCESS',      short: 'Zone IV access' },
+    { id: 'T4', gpio: 7,  event: 'SAFETY_CLEARANCE', short: 'Final clearance' },
+    { id: 'T5', gpio: 13, event: 'PROCEED_TO_SCAN',  short: 'Proceed to scan' },
+    { id: 'T6', gpio: 14, event: 'RESET_SCENARIO',   short: 'Reset attempt' },
+  ];
+  const PAD_EVENT = Object.fromEntries(PADS.map(p => [p.id, p.event]));
+  const ATTEST_EVENTS = PADS.map(p => p.event);
+  // Accepted for compatibility with the original brief's naming.
+  const EVENT_ALIASES = { START_SIMULATION: 'PROCEED_TO_SCAN' };
+
+  // Events produced by interacting with the 3D scene / inspector.
+  const SCENE_EVENTS = [
+    'CONFIRM_ID',           // trainee confirms two identifiers match
+    'INSPECT',              // target: 'record' | 'patient' | itemId | other scene object
+    'IMPLANT_DECISION',     // value: 'ESCALATE' | 'PROCEED_ON_CARD' | 'IGNORE'
+    'CLASSIFY',             // target: itemId, value: label
+    'CONFIRM_CONDITIONS',   // target: itemId (MR Conditional item)
+    'MOVE',                 // target: itemId, value: zone
+    'REMOVE_PERSONAL_ITEM', // target: personal item id
+  ];
+  const ALL_EVENTS = ATTEST_EVENTS.concat(SCENE_EVENTS);
+
+  const LABELS = {
+    MR_SAFE:        { text: 'MR Safe',        tone: 'safe' },
+    MR_CONDITIONAL: { text: 'MR Conditional', tone: 'conditional' },
+    MR_UNSAFE:      { text: 'MR Unsafe',      tone: 'unsafe' },
+  };
+  const ZONES = {
+    ZONE_II: { text: 'Zone II · staging' },
+    ZONE_IV: { text: 'Zone IV · magnet room' },
+  };
+  const SOURCES = ['hw', 'kbd', 'ui', 'scene', 'test'];
+
+  /* ---------------------------------------------------------------
+   * 2. Rule dataset
+   * Every rule is an EDUCATIONAL SIMPLIFICATION. `basis` names the
+   * guidance the rule is modelled on; none has been verified by a
+   * qualified MR safety officer for this prototype (status field).
+   * ------------------------------------------------------------- */
+  const SEVERITY = {
+    critical: { label: 'Critical', points: 25 },
+    major:    { label: 'Major',    points: 10 },
+    minor:    { label: 'Minor',    points: 5 },
+  };
+  const SCORING = { start: 100, passMinScore: 80, passMaxCritical: 0 };
+
+  const BASIS = {
+    ACR: 'ACR Manual on MR Safety (American College of Radiology)',
+    ASTM: 'ASTM F2503 — marking of medical devices for safety in the MR environment',
+    NPSG: 'Two-identifier patient identification (Joint Commission NPSG.01.01.01)',
+    LOCAL: 'Training-procedure convention for this prototype (not a clinical rule)',
+  };
+
+  const RULES = {
+    'R-ID-01': {
+      category: 'screening', severity: 'major', basis: 'NPSG',
+      title: 'Identity not confirmed before screening sign-off',
+      why: 'Screening answers only protect the patient they belong to. Two identifiers (name and MRN or date of birth) must match the request and the wristband.',
+      corrective: 'Open the patient record and confirm that both identifiers on the wristband match the scan request, then sign off screening.',
+    },
+    'R-SCR-01': {
+      category: 'screening', severity: 'major', basis: 'ACR',
+      title: 'Screening signed off without reviewing the form',
+      why: 'Every patient must be screened before entering Zone IV. Signing off without reading the form means implants, devices and prior metal injuries can be missed.',
+      corrective: 'Open the patient record, read the MR screening form, then sign off.',
+    },
+    'R-SCR-02': {
+      category: 'screening', severity: 'critical', basis: 'ACR',
+      title: 'Reported implant not referred for review',
+      why: '"MR Conditional" means the device is acceptable only under specific conditions in its labelling (for example field strength and scan limits). A patient card alone does not show that those conditions can be met for this scan.',
+      corrective: 'Escalate the implant to the MR safety officer or supervising radiologist for review against the manufacturer\'s MR Conditional labelling before sign-off.',
+    },
+    'R-EQ-01': {
+      category: 'equipment', severity: 'major', basis: 'ASTM',
+      title: 'Equipment signed off with items not classified',
+      why: 'Each item near the magnet room needs its MR status determined from its labelling before equipment can be cleared.',
+      corrective: 'Select each item in the staging area and Zone IV, read its labelling, and classify it.',
+    },
+    'R-EQ-02': {
+      category: 'equipment', severity: 'major', basis: 'ASTM',
+      title: 'Item misclassified',
+      why: 'MR status comes from the item\'s labelling. Items with no labelling have unknown status and are handled as MR Unsafe.',
+      corrective: 'Re-read the item\'s label and correct the classification.',
+    },
+    'R-EQ-03': {
+      category: 'equipment', severity: 'critical', basis: 'ACR',
+      title: 'MR Unsafe item in or brought into Zone IV',
+      why: 'Ferromagnetic objects can be pulled into the magnet with great force (projectile effect). The magnetic field is always on, even when no scan is running.',
+      corrective: 'Keep the item out of Zone IV. Move it back to the Zone II staging area.',
+    },
+    'R-EQ-04': {
+      category: 'equipment', severity: 'major', basis: 'ASTM',
+      title: 'MR Conditional item in Zone IV without its conditions checked',
+      why: 'An MR Conditional item is acceptable only when the conditions in its labelling are met in this suite.',
+      corrective: 'Open the item and confirm its conditions against the labelling, or move it out of Zone IV.',
+    },
+    'R-EQ-05': {
+      category: 'equipment', severity: 'critical', basis: 'ASTM',
+      title: 'MR Unsafe or unknown item classified as acceptable',
+      why: 'Calling an MR Unsafe or unlabelled item "Safe" or "Conditional" is the error that lets a projectile into the magnet room.',
+      corrective: 'Classify items with no MR labelling, or an MR Unsafe label, as MR Unsafe.',
+    },
+    'R-EQ-06': {
+      category: 'equipment', severity: 'major', basis: 'ACR',
+      title: 'Item moved toward Zone IV before its MR status was determined',
+      why: 'Nothing should enter Zone IV until its MR status is known.',
+      corrective: 'Inspect and classify the item first.',
+    },
+    'R-ACC-01': {
+      category: 'access', severity: 'critical', basis: 'ACR',
+      title: 'Personal metallic items not removed before Zone IV',
+      why: 'Phones, hair clips, keys and similar items can become projectiles, heat up, or be damaged by the field.',
+      corrective: 'Inspect the patient, remove and store personal items in the locker, then repeat the access check.',
+    },
+    'R-ACC-02': {
+      category: 'access', severity: 'major', basis: 'LOCAL',
+      title: 'Patient not checked at the Zone IV door',
+      why: 'A final visual and verbal check at the door catches items added after screening (for example a phone picked up while waiting).',
+      corrective: 'Select the patient on the table to perform the final check before attesting room access.',
+    },
+    'R-SEQ-01': {
+      category: 'sequence', severity: 'major', basis: 'LOCAL',
+      title: 'Step attempted before its prerequisites',
+      why: 'The procedure is ordered so that each sign-off rests on checks already completed.',
+      corrective: 'Complete the earlier checkpoints first. The procedure list shows which ones are open.',
+    },
+    'R-SEQ-02': {
+      category: 'access', severity: 'critical', basis: 'ACR',
+      title: 'Zone IV access attempted before screening and equipment clearance',
+      why: 'Only screened patients and cleared equipment may enter Zone IV.',
+      corrective: 'Finish screening sign-off and equipment verification before the room access check.',
+    },
+    'R-SCAN-01': {
+      category: 'sequence', severity: 'critical', basis: 'LOCAL',
+      title: 'Scan started without final safety clearance',
+      why: 'The final clearance confirms nothing changed since the earlier checks. Starting without it skips the last barrier.',
+      corrective: 'Complete the final safety clearance (T4), then proceed to scan.',
+    },
+  };
+  for (const id of Object.keys(RULES)) {
+    RULES[id].id = id;
+    RULES[id].status = 'illustrative';
+    RULES[id].basisText = BASIS[RULES[id].basis];
+  }
+
+  /* ---------------------------------------------------------------
+   * 3. Items, patients, scenarios
+   * ------------------------------------------------------------- */
+  const ITEMS = {
+    o2: {
+      name: 'Oxygen cylinder on trolley', truth: 'MR_UNSAFE', labelShown: null,
+      material: 'Steel cylinder, steel trolley frame',
+      note: 'No MR labelling on the cylinder or the trolley. Status unknown.',
+    },
+    wheelchair: {
+      name: 'Transport wheelchair', truth: 'MR_UNSAFE', labelShown: 'MR_UNSAFE',
+      material: 'Steel frame',
+      note: 'Labelled MR Unsafe.',
+    },
+    ivpole: {
+      name: 'IV pole', truth: 'MR_CONDITIONAL', labelShown: 'MR_CONDITIONAL',
+      material: 'Aluminium and plastic',
+      note: 'Labelled MR Conditional. Conditions of use are listed in the manufacturer\'s documentation.',
+    },
+    pads: {
+      name: 'Foam positioning pads', truth: 'MR_SAFE', labelShown: 'MR_SAFE',
+      material: 'Polyurethane foam, no metal',
+      note: 'Labelled MR Safe.',
+    },
+    pump: {
+      name: 'Infusion pump', truth: 'MR_UNSAFE', labelShown: null,
+      material: 'Electronic device in a metal housing',
+      note: 'No MR labelling found. Status unknown.',
+    },
+  };
+
+  const PERSONAL_ITEMS = {
+    hairclip: { name: 'Metal hair clip' },
+    phone:    { name: 'Mobile phone in gown pocket' },
+  };
+
+  const BASE_PATIENT = {
+    name: 'Training Patient A', mrn: 'TR-00417', dob: '1984-03-12',
+    exam: 'MRI brain without contrast (training case)',
+    fictional: true,
+  };
+
+  const IMPLANT_CIED = {
+    type: 'Cardiac implantable electronic device',
+    card: 'Patient carries a device card that states "MR Conditional".',
+  };
+
+  const ALL_CHECKPOINTS = ['SCREENING', 'EQUIPMENT', 'ACCESS', 'CLEARANCE', 'SCAN'];
+
+  const SCENARIOS = {
+    guided: {
+      title: 'Guided practice', level: 1, hints: true, kind: 'core',
+      summary: 'Full pre-scan preparation with the next step highlighted.',
+      checkpoints: ALL_CHECKPOINTS,
+      patient: { implant: null, personal: [] },
+      items: { pads: 'ZONE_IV', o2: 'ZONE_II', ivpole: 'ZONE_II' },
+    },
+    standard: {
+      title: 'Standard pre-scan', level: 2, hints: false, kind: 'core',
+      summary: 'Full pre-scan preparation. One hazard has been left in the magnet room.',
+      checkpoints: ALL_CHECKPOINTS,
+      patient: { implant: null, personal: ['hairclip'] },
+      items: { o2: 'ZONE_IV', pads: 'ZONE_IV', ivpole: 'ZONE_II', wheelchair: 'ZONE_II' },
+    },
+    complex: {
+      title: 'Complex pre-scan', level: 3, hints: false, kind: 'core',
+      summary: 'Implant on the screening form, personal items, and several hazards.',
+      checkpoints: ALL_CHECKPOINTS,
+      patient: { implant: IMPLANT_CIED, personal: ['phone', 'hairclip'] },
+      items: { o2: 'ZONE_IV', ivpole: 'ZONE_IV', pads: 'ZONE_IV', wheelchair: 'ZONE_II', pump: 'ZONE_II' },
+    },
+    'drill-equipment': {
+      title: 'Equipment classification drill', level: 2, hints: false, kind: 'drill',
+      summary: 'Classify every item by its labelling and clear Zone IV.',
+      checkpoints: ['EQUIPMENT'],
+      patient: { implant: null, personal: [] },
+      items: { o2: 'ZONE_IV', pump: 'ZONE_IV', ivpole: 'ZONE_IV', wheelchair: 'ZONE_II', pads: 'ZONE_II' },
+    },
+    'drill-screening': {
+      title: 'Screening drill', level: 2, hints: false, kind: 'drill',
+      summary: 'Identity check, form review and implant referral.',
+      checkpoints: ['SCREENING'],
+      patient: { implant: IMPLANT_CIED, personal: [] },
+      items: {},
+    },
+  };
+  const PROGRESSION = { guided: 'standard', standard: 'complex', complex: 'complex' };
+
+  /* ---------------------------------------------------------------
+   * 4. Checkpoints and requirement checks
+   * Each check returns null when satisfied, or { rule, subject, evidence, focus }.
+   * ------------------------------------------------------------- */
+  const CHECKPOINTS = {
+    SCREENING: {
+      id: 'SCREENING', event: 'SCREENING_CHECK', pad: 'T1', stage: 1,
+      title: 'Screening sign-off', detail: 'Identity, screening form and implant review',
+      prereqs: [], prereqRule: 'R-SEQ-01',
+      requires: ['idConfirmed', 'formReviewed', 'implantResolved'],
+    },
+    EQUIPMENT: {
+      id: 'EQUIPMENT', event: 'VERIFY_EQUIPMENT', pad: 'T2', stage: 2,
+      title: 'Equipment verification', detail: 'Every item classified, Zone IV clear',
+      prereqs: [], prereqRule: 'R-SEQ-01',
+      requires: ['allClassified', 'classificationsCorrect', 'noUnsafeInZoneIV', 'conditionalConfirmed'],
+    },
+    ACCESS: {
+      id: 'ACCESS', event: 'ROOM_ACCESS', pad: 'T3', stage: 3,
+      title: 'Zone IV access check', detail: 'Final patient check at the door',
+      prereqs: ['SCREENING', 'EQUIPMENT'], prereqRule: 'R-SEQ-02',
+      requires: ['patientChecked', 'personalRemoved'],
+    },
+    CLEARANCE: {
+      id: 'CLEARANCE', event: 'SAFETY_CLEARANCE', pad: 'T4', stage: 4,
+      title: 'Final safety clearance', detail: 'Re-check that nothing changed',
+      prereqs: ['ACCESS'], prereqRule: 'R-SEQ-01',
+      requires: ['noUnsafeInZoneIV', 'conditionalConfirmed', 'personalRemoved'],
+    },
+    SCAN: {
+      id: 'SCAN', event: 'PROCEED_TO_SCAN', pad: 'T5', stage: 5,
+      title: 'Proceed to scan', detail: 'Table moves into the bore',
+      prereqs: ['CLEARANCE'], prereqRule: 'R-SCAN-01',
+      requires: [],
+    },
+  };
+  const CHECKPOINT_BY_EVENT = Object.fromEntries(Object.values(CHECKPOINTS).map(c => [c.event, c.id]));
+
+  const itemName = id => (ITEMS[id] ? ITEMS[id].name : id);
+  const labelText = l => (LABELS[l] ? LABELS[l].text : 'unclassified');
+
+  const CHECKS = {
+    idConfirmed: s => s.patient.idConfirmed ? null : {
+      rule: 'R-ID-01', subject: 'patient',
+      evidence: 'Patient identifiers had not been confirmed against the request.',
+      hint: 'Open the patient record and confirm the two identifiers.', focus: 'record',
+    },
+    formReviewed: s => s.patient.formReviewed ? null : {
+      rule: 'R-SCR-01', subject: 'patient',
+      evidence: 'The MR screening form had not been opened.',
+      hint: 'Open the patient record to review the MR screening form.', focus: 'record',
+    },
+    implantResolved: s => (!s.patient.implant || s.patient.implantResolved) ? null : {
+      rule: 'R-SCR-02', subject: 'implant',
+      evidence: `The form reports a ${s.patient.implant.type.toLowerCase()} that had not been referred for review.`,
+      hint: 'The form lists an implant. Decide how to handle it in the patient record.', focus: 'record',
+    },
+    allClassified: s => {
+      const open = Object.keys(s.items).filter(id => !s.items[id].classifiedAs);
+      return open.length === 0 ? null : {
+        rule: 'R-EQ-01', subject: 'items',
+        evidence: `Not yet classified: ${open.map(itemName).join(', ')}.`,
+        hint: `Select the ${itemName(open[0]).toLowerCase()} and classify it from its label.`, focus: open[0],
+      };
+    },
+    classificationsCorrect: s => {
+      const wrong = Object.keys(s.items).filter(id => s.items[id].classifiedAs && s.items[id].classifiedAs !== ITEMS[id].truth);
+      return wrong.length === 0 ? null : {
+        rule: 'R-EQ-02', subject: 'items:' + wrong.join(','),
+        evidence: wrong.map(id => `${itemName(id)} is classified as ${labelText(s.items[id].classifiedAs)}`).join('; ') + '.',
+        hint: `Re-check the label on the ${itemName(wrong[0]).toLowerCase()}.`, focus: wrong[0],
+      };
+    },
+    noUnsafeInZoneIV: s => {
+      const bad = Object.keys(s.items).filter(id => s.items[id].zone === 'ZONE_IV' && ITEMS[id].truth === 'MR_UNSAFE');
+      return bad.length === 0 ? null : {
+        rule: 'R-EQ-03', subject: 'zone4:' + bad.join(','),
+        evidence: `${bad.map(itemName).join(', ')} ${bad.length > 1 ? 'were' : 'was'} still inside Zone IV.`,
+        hint: `Move the ${itemName(bad[0]).toLowerCase()} out of the magnet room.`, focus: bad[0],
+      };
+    },
+    conditionalConfirmed: s => {
+      const bad = Object.keys(s.items).filter(id => s.items[id].zone === 'ZONE_IV' && ITEMS[id].truth === 'MR_CONDITIONAL' && !s.items[id].conditionsConfirmed);
+      return bad.length === 0 ? null : {
+        rule: 'R-EQ-04', subject: 'cond:' + bad.join(','),
+        evidence: `${bad.map(itemName).join(', ')} is in Zone IV and its MR Conditional conditions were not confirmed.`,
+        hint: `Confirm the conditions for the ${itemName(bad[0]).toLowerCase()}, or move it out.`, focus: bad[0],
+      };
+    },
+    patientChecked: s => s.patient.checked ? null : {
+      rule: 'R-ACC-02', subject: 'patient',
+      evidence: 'The patient was not checked at the Zone IV door.',
+      hint: 'Select the patient on the table for the final door check.', focus: 'patient',
+    },
+    personalRemoved: s => {
+      const left = s.patient.personal.filter(p => !p.removed);
+      return left.length === 0 ? null : {
+        rule: 'R-ACC-01', subject: 'personal',
+        evidence: `${left.map(p => PERSONAL_ITEMS[p.id].name).join(', ')} still with the patient.`,
+        hint: 'Inspect the patient and remove personal items.', focus: 'patient',
+      };
+    },
+  };
+
+  const REQ_LABELS = {
+    idConfirmed: 'Two identifiers confirmed',
+    formReviewed: 'Screening form reviewed',
+    implantResolved: 'Implant referred for review (if reported)',
+    allClassified: 'Every item classified',
+    classificationsCorrect: 'Classifications match labelling',
+    noUnsafeInZoneIV: 'No MR Unsafe item in Zone IV',
+    conditionalConfirmed: 'Conditional items in Zone IV checked',
+    patientChecked: 'Patient checked at the door',
+    personalRemoved: 'Personal items removed',
+  };
+
+  /* ---------------------------------------------------------------
+   * 5. Attempt — deterministic state machine for one scenario run
+   * ------------------------------------------------------------- */
+  function defaultClock() { return Date.now(); }
+
+  function validateEvent(evt) {
+    if (!evt || typeof evt !== 'object') return 'Event must be an object.';
+    if (typeof evt.event !== 'string') return 'Event name missing.';
+    const name = EVENT_ALIASES[evt.event] || evt.event;
+    if (!ALL_EVENTS.includes(name)) return `Unknown event "${evt.event}".`;
+    if (evt.src !== undefined && !SOURCES.includes(evt.src)) return `Unknown source "${evt.src}".`;
+    if (['CLASSIFY', 'CONFIRM_CONDITIONS', 'MOVE', 'REMOVE_PERSONAL_ITEM', 'INSPECT'].includes(name) && typeof evt.target !== 'string') {
+      return `${name} needs a target.`;
+    }
+    if (name === 'CLASSIFY' && !LABELS[evt.value]) return `CLASSIFY value must be one of ${Object.keys(LABELS).join(', ')}.`;
+    if (name === 'MOVE' && !ZONES[evt.value]) return `MOVE value must be one of ${Object.keys(ZONES).join(', ')}.`;
+    if (name === 'IMPLANT_DECISION' && !['ESCALATE', 'PROCEED_ON_CARD', 'IGNORE'].includes(evt.value)) return 'IMPLANT_DECISION value is not recognised.';
+    return null;
+  }
+
+  class Attempt {
+    constructor(scenarioId, opts = {}) {
+      const sc = SCENARIOS[scenarioId];
+      if (!sc) throw new Error(`Unknown scenario "${scenarioId}"`);
+      this.scenarioId = scenarioId;
+      this.scenario = sc;
+      this.clock = opts.clock || defaultClock;
+      this.attemptNo = opts.attemptNo || 1;
+      this.startedAt = this.clock();
+      this.endedAt = null;
+      this.status = 'active'; // active | completed | reset | switched
+      this.log = [];
+      this.deductions = {};   // key "rule|subject" -> points (each pair penalised once)
+      this.checkpoints = {};
+      for (const id of sc.checkpoints) this.checkpoints[id] = { status: 'open', completedAt: null, incorrect: 0, repeats: 0 };
+      this.patient = {
+        ...BASE_PATIENT,
+        implant: sc.patient.implant,
+        personal: sc.patient.personal.map(id => ({ id, removed: false })),
+        idConfirmed: false, formReviewed: false, implantResolved: false, implantDecision: null, checked: false,
+      };
+      this.items = {};
+      for (const [id, zone] of Object.entries(sc.items)) {
+        this.items[id] = { zone, startZone: zone, inspected: false, classifiedAs: null, conditionsConfirmed: false };
+      }
+    }
+
+    /* Order of checkpoints as defined by the scenario. */
+    get order() { return this.scenario.checkpoints; }
+
+    isComplete() { return this.order.every(id => this.checkpoints[id].status === 'done'); }
+
+    score() {
+      const lost = Object.values(this.deductions).reduce((a, b) => a + b, 0);
+      return Math.max(0, SCORING.start - lost);
+    }
+
+    violations() { return this.log.flatMap(o => o.violations.map(v => ({ ...v, n: o.n, at: o.at }))); }
+
+    criticalCount() {
+      // Unique critical (rule|subject) pairs
+      const keys = new Set(this.violations().filter(v => v.severity === 'critical').map(v => v.rule + '|' + v.subject));
+      return keys.size;
+    }
+
+    passed() {
+      return this.isComplete() && this.score() >= SCORING.passMinScore && this.criticalCount() <= SCORING.passMaxCritical;
+    }
+
+    _violation(check) {
+      const r = RULES[check.rule];
+      const key = check.rule + '|' + check.subject;
+      const first = !(key in this.deductions);
+      const points = first ? SEVERITY[r.severity].points : 0;
+      if (first) this.deductions[key] = points;
+      return {
+        rule: r.id, severity: r.severity, category: r.category, title: r.title,
+        subject: check.subject, evidence: check.evidence, why: r.why, corrective: r.corrective,
+        points, repeat: !first, status: r.status, basis: r.basisText,
+      };
+    }
+
+    _unmet(checkpointId) {
+      return CHECKPOINTS[checkpointId].requires.map(name => CHECKS[name](this)).filter(Boolean);
+    }
+
+    /* Per-requirement status for one checkpoint (used by guided mode and the trainer view). */
+    requirementStatus(cpId) {
+      return CHECKPOINTS[cpId].requires.map(name => ({ name, label: REQ_LABELS[name], ok: !CHECKS[name](this) }));
+    }
+
+    /* Next step guidance — used for guided mode and the trainer view. */
+    nextHint() {
+      if (this.status !== 'active') return null;
+      for (const id of this.order) {
+        const cp = this.checkpoints[id];
+        if (cp.status === 'done') continue;
+        const missing = CHECKPOINTS[id].prereqs.filter(p => this.checkpoints[p] && this.checkpoints[p].status !== 'done');
+        if (missing.length) continue;
+        const unmet = this._unmet(id);
+        if (unmet.length) return { checkpoint: id, text: unmet[0].hint, focus: unmet[0].focus };
+        const def = CHECKPOINTS[id];
+        return { checkpoint: id, text: `Ready: touch ${def.pad} (${def.title}).`, focus: 'pad:' + def.pad };
+      }
+      return null;
+    }
+
+    /* Main entry point. Always returns an outcome record; never throws for bad input. */
+    handle(raw) {
+      const at = this.clock() - this.startedAt;
+      const evt = raw && typeof raw === 'object' ? { ...raw } : { event: raw };
+      if (typeof evt.event === 'string' && EVENT_ALIASES[evt.event]) evt.event = EVENT_ALIASES[evt.event];
+      const o = {
+        n: this.log.length + 1, at, wall: new Date(this.clock()).toISOString(),
+        src: evt.src || 'test', devSeq: Number.isInteger(evt.seq) ? evt.seq : null, pad: evt.pad || null,
+        event: typeof evt.event === 'string' ? evt.event : String(evt.event),
+        target: evt.target || null, value: evt.value || null,
+        received: true, accepted: false, checkpointCompleted: null,
+        violations: [], notes: [], error: null, feedbackShown: false, effects: [],
+      };
+      this.log.push(o);
+
+      const invalid = validateEvent(evt);
+      if (invalid) { o.error = 'INVALID_EVENT'; o.notes.push(invalid); return o; }
+      if (this.status !== 'active') { o.error = 'ATTEMPT_CLOSED'; o.notes.push('This attempt has ended. Start a new attempt.'); return o; }
+
+      if (evt.event === 'RESET_SCENARIO') {
+        // Handled by Session; an Attempt on its own just records it.
+        o.accepted = true; o.notes.push('Reset requested.');
+        return o;
+      }
+      if (ATTEST_EVENTS.includes(evt.event)) return this._attest(o, evt);
+      return this._scene(o, evt);
+    }
+
+    _attest(o, evt) {
+      const cpId = CHECKPOINT_BY_EVENT[evt.event];
+      const cp = this.checkpoints[cpId];
+      const def = CHECKPOINTS[cpId];
+      if (!cp) {
+        o.error = 'NOT_IN_SCENARIO';
+        o.notes.push(`${def.title} is not part of this scenario.`);
+        return o;
+      }
+      if (cp.status === 'done') {
+        cp.repeats++;
+        o.notes.push(`${def.title} was already completed. Repeat touch recorded, no change.`);
+        return o;
+      }
+      // Prerequisites (only those included in this scenario)
+      const missing = def.prereqs.filter(p => this.checkpoints[p] && this.checkpoints[p].status !== 'done');
+      if (missing.length) {
+        cp.incorrect++;
+        o.violations.push(this._violation({
+          rule: def.prereqRule, subject: cpId,
+          evidence: `${def.pad} (${def.title}) was touched while ${missing.map(m => CHECKPOINTS[m].title).join(' and ')} ${missing.length > 1 ? 'were' : 'was'} still open.`,
+        }));
+        o.canProceed = false;
+        return o;
+      }
+      const unmet = this._unmet(cpId);
+      if (unmet.length) {
+        cp.incorrect++;
+        for (const u of unmet) {
+          o.violations.push(this._violation({ ...u, evidence: `${def.pad} (${def.title}) was touched while this was unresolved: ${u.evidence}` }));
+        }
+        o.canProceed = false;
+        return o;
+      }
+      cp.status = 'done';
+      cp.completedAt = o.at;
+      o.accepted = true;
+      o.checkpointCompleted = cpId;
+      o.canProceed = true;
+      o.effects.push({ type: 'checkpoint', id: cpId });
+      if (cpId === 'SCAN') o.effects.push({ type: 'scan' });
+      if (this.isComplete()) {
+        this.status = 'completed';
+        this.endedAt = this.clock();
+        o.effects.push({ type: 'complete' });
+      }
+      return o;
+    }
+
+    _scene(o, evt) {
+      const p = this.patient;
+      switch (evt.event) {
+        case 'CONFIRM_ID':
+          if (p.idConfirmed) { o.notes.push('Identifiers already confirmed.'); return o; }
+          p.idConfirmed = true; o.accepted = true; o.notes.push('Two identifiers confirmed against the request.');
+          return o;
+
+        case 'INSPECT': {
+          const t = evt.target;
+          if (t === 'record') { o.accepted = true; if (!p.formReviewed) { p.formReviewed = true; o.notes.push('Screening form opened.'); } return o; }
+          if (t === 'patient') { o.accepted = true; if (!p.checked) { p.checked = true; o.notes.push('Patient checked.'); } return o; }
+          if (this.items[t]) { o.accepted = true; this.items[t].inspected = true; return o; }
+          // Other scene objects (gantry, console, door): informational only
+          o.accepted = true; o.notes.push('Viewed ' + t + '.');
+          return o;
+        }
+
+        case 'IMPLANT_DECISION':
+          if (!p.implant) { o.error = 'NO_IMPLANT'; o.notes.push('No implant is reported for this patient.'); return o; }
+          if (p.implantResolved) { o.notes.push('Implant already referred.'); return o; }
+          p.implantDecision = evt.value;
+          if (evt.value === 'ESCALATE') {
+            p.implantResolved = true; o.accepted = true;
+            o.notes.push('Implant referred to the MR safety officer / supervising radiologist. Simulated outcome: review completed, scan may proceed under the labelled conditions.');
+            return o;
+          }
+          o.violations.push(this._violation({
+            rule: 'R-SCR-02', subject: 'implant',
+            evidence: evt.value === 'PROCEED_ON_CARD'
+              ? 'You chose to proceed on the strength of the patient\'s device card alone.'
+              : 'You chose to disregard the implant reported on the screening form.',
+          }));
+          o.canProceed = false;
+          return o;
+
+        case 'CLASSIFY': {
+          const it = this.items[evt.target];
+          if (!it) { o.error = 'UNKNOWN_TARGET'; o.notes.push('No such item in this scenario.'); return o; }
+          it.classifiedAs = evt.value; it.inspected = true;
+          o.accepted = true;
+          const truth = ITEMS[evt.target].truth;
+          if (evt.value !== truth) {
+            const critical = truth === 'MR_UNSAFE';
+            o.violations.push(this._violation({
+              rule: critical ? 'R-EQ-05' : 'R-EQ-02', subject: 'class:' + evt.target,
+              evidence: `${itemName(evt.target)} was classified as ${labelText(evt.value)}. ${ITEMS[evt.target].note}`,
+            }));
+          } else {
+            o.notes.push(`${itemName(evt.target)} classified as ${labelText(evt.value)}.`);
+          }
+          if (truth !== 'MR_CONDITIONAL') it.conditionsConfirmed = false;
+          return o;
+        }
+
+        case 'CONFIRM_CONDITIONS': {
+          const it = this.items[evt.target];
+          if (!it) { o.error = 'UNKNOWN_TARGET'; o.notes.push('No such item in this scenario.'); return o; }
+          if (it.classifiedAs !== 'MR_CONDITIONAL') { o.notes.push('Classify the item as MR Conditional before confirming conditions.'); return o; }
+          if (ITEMS[evt.target].truth !== 'MR_CONDITIONAL') { o.notes.push('This item is not MR Conditional; there are no conditions to confirm.'); return o; }
+          it.conditionsConfirmed = true; o.accepted = true;
+          o.notes.push(`Conditions for ${itemName(evt.target).toLowerCase()} confirmed against its labelling (simulated).`);
+          return o;
+        }
+
+        case 'MOVE': {
+          const it = this.items[evt.target];
+          if (!it) { o.error = 'UNKNOWN_TARGET'; o.notes.push('No such item in this scenario.'); return o; }
+          if (it.zone === evt.value) { o.notes.push('Item is already there.'); return o; }
+          if (evt.value === 'ZONE_IV') {
+            const truth = ITEMS[evt.target].truth;
+            let check = null;
+            if (truth === 'MR_UNSAFE') check = { rule: 'R-EQ-03', subject: 'move:' + evt.target, evidence: `You tried to move the ${itemName(evt.target).toLowerCase()} into Zone IV. The move was blocked.` };
+            else if (!it.classifiedAs) check = { rule: 'R-EQ-06', subject: 'move:' + evt.target, evidence: `You tried to move the ${itemName(evt.target).toLowerCase()} into Zone IV before classifying it. The move was blocked.` };
+            else if (truth === 'MR_CONDITIONAL' && !it.conditionsConfirmed) check = { rule: 'R-EQ-04', subject: 'move:' + evt.target, evidence: `You tried to move the ${itemName(evt.target).toLowerCase()} into Zone IV before confirming its conditions. The move was blocked.` };
+            if (check) { o.violations.push(this._violation(check)); o.canProceed = false; return o; }
+          }
+          it.zone = evt.value; o.accepted = true;
+          o.effects.push({ type: 'move', id: evt.target, zone: evt.value });
+          o.notes.push(`${itemName(evt.target)} moved to ${ZONES[evt.value].text}.`);
+          return o;
+        }
+
+        case 'REMOVE_PERSONAL_ITEM': {
+          const item = p.personal.find(x => x.id === evt.target);
+          if (!item) { o.error = 'UNKNOWN_TARGET'; o.notes.push('The patient does not have that item.'); return o; }
+          if (item.removed) { o.notes.push('Already removed.'); return o; }
+          item.removed = true; o.accepted = true;
+          o.effects.push({ type: 'personal', id: evt.target });
+          o.notes.push(`${PERSONAL_ITEMS[evt.target].name} removed and stored in the locker.`);
+          return o;
+        }
+      }
+      o.error = 'UNHANDLED'; return o;
+    }
+
+    markFeedbackShown(n) { const o = this.log[n - 1]; if (o) o.feedbackShown = true; }
+
+    close(status) {
+      if (this.status === 'active') { this.status = status; this.endedAt = this.clock(); }
+    }
+
+    summary() {
+      const v = this.violations();
+      const byCategory = {};
+      for (const x of v) if (!x.repeat) byCategory[x.category] = (byCategory[x.category] || 0) + 1;
+      const correct = this.log.filter(o => o.accepted && o.violations.length === 0 && !o.error).length;
+      const incorrect = this.log.filter(o => o.violations.length > 0).length;
+      return {
+        scenarioId: this.scenarioId, scenarioTitle: this.scenario.title, attemptNo: this.attemptNo,
+        status: this.status, completed: this.isComplete(), passed: this.passed(),
+        score: this.score(), criticalCount: this.criticalCount(),
+        durationMs: (this.endedAt || this.clock()) - this.startedAt,
+        correctActions: correct, incorrectActions: incorrect, events: this.log.length,
+        violationsUnique: Object.keys(this.deductions).length, byCategory,
+        criticalCategories: [...new Set(v.filter(x => x.severity === 'critical').map(x => x.category))],
+        checkpoints: Object.fromEntries(this.order.map(id => [id, { ...this.checkpoints[id] }])),
+      };
+    }
+  }
+
+  /* ---------------------------------------------------------------
+   * 6. Session — a trainee's run of attempts
+   * ------------------------------------------------------------- */
+  let _sessionCounter = 0;
+  function makeSessionId(clock) {
+    _sessionCounter++;
+    const d = new Date(clock());
+    const pad = n => String(n).padStart(2, '0');
+    return `S-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}-${_sessionCounter}`;
+  }
+
+  class Session {
+    constructor(opts = {}) {
+      this.clock = opts.clock || defaultClock;
+      this.id = opts.id || makeSessionId(this.clock);
+      this.trainee = opts.trainee || 'Trainee 01';
+      this.startedAt = this.clock();
+      this.attempts = [];
+      this.recommendations = [];
+      this.start(opts.scenarioId || 'standard');
+    }
+    get current() { return this.attempts[this.attempts.length - 1]; }
+    retriesFor(scenarioId) { return this.attempts.filter(a => a.scenarioId === scenarioId && a.status === 'reset').length; }
+    get totalRetries() { return this.attempts.filter(a => a.status === 'reset').length; }
+
+    /* closeAs: 'reset' (trainee retry, counted) or 'switched' (trainer changed scenario, not counted). */
+    start(scenarioId, closeAs = 'switched') {
+      if (this.current) this.current.close(closeAs);
+      const n = this.attempts.filter(a => a.scenarioId === scenarioId).length + 1;
+      const a = new Attempt(scenarioId, { clock: this.clock, attemptNo: n });
+      this.attempts.push(a);
+      return a;
+    }
+
+    handle(evt) {
+      const a = this.current;
+      const out = a.handle(evt);
+      if (out.accepted && (out.event === 'RESET_SCENARIO')) {
+        out.effects.push({ type: 'reset' });
+        this.start(a.scenarioId, 'reset');
+        out.notes.push(`Attempt ${a.attemptNo} closed as reset. Attempt ${this.current.attemptNo} started.`);
+      }
+      if (out.effects.some(e => e.type === 'complete')) {
+        const rec = recommendNext(this.results());
+        rec.afterAttempt = this.attempts.length;
+        this.recommendations.push(rec);
+        out.recommendation = rec;
+      }
+      return out;
+    }
+
+    /* Completed attempts only (resets are counted as retries, not results). */
+    results() { return this.attempts.filter(a => a.status === 'completed').map(a => a.summary()); }
+
+    report() {
+      return {
+        kind: 'MRISafeTwin.sessionReport', version: 1,
+        disclaimer: 'Educational prototype. Rules are illustrative and not a substitute for local MR safety procedures or certification.',
+        sessionId: this.id, trainee: this.trainee,
+        startedAt: new Date(this.startedAt).toISOString(), exportedAt: new Date(this.clock()).toISOString(),
+        dataOrigin: 'Recorded in this browser session (not demonstration data).',
+        scoring: { ...SCORING, severityPoints: Object.fromEntries(Object.entries(SEVERITY).map(([k, v]) => [k, v.points])), dedupe: 'Each rule is penalised once per subject per attempt; repeats are logged with 0 points.' },
+        totalRetries: this.totalRetries,
+        attempts: this.attempts.map(a => ({ ...a.summary(), log: a.log, violations: a.violations() })),
+        recommendations: this.recommendations,
+      };
+    }
+  }
+
+  /* ---------------------------------------------------------------
+   * 7. Adaptive scenario selection (transparent, rule-ordered)
+   * ------------------------------------------------------------- */
+  const ADAPT_RULES = [
+    { id: 'AD-1', text: 'Two consecutive attempts did not pass → guided practice with hints.' },
+    { id: 'AD-2', text: 'Passed → unlock the next level (drills return to the last full scenario).' },
+    { id: 'AD-3', text: 'Not passed with a critical or ≥2 equipment violations → equipment classification drill.' },
+    { id: 'AD-4', text: 'Not passed with a critical or ≥2 screening violations → screening drill.' },
+    { id: 'AD-5', text: 'Otherwise → repeat the same scenario.' },
+  ];
+
+  function recommendNext(results) {
+    if (!results.length) return { scenarioId: 'guided', rule: 'AD-0', reason: 'No completed attempts yet; starting with guided practice.' };
+    const last = results[results.length - 1];
+    const prev = results[results.length - 2];
+    const lastCore = [...results].reverse().find(r => SCENARIOS[r.scenarioId].kind === 'core');
+    const pick = (scenarioId, rule, reason) => ({ scenarioId, rule, reason, basedOn: { scenarioId: last.scenarioId, score: last.score, passed: last.passed, byCategory: last.byCategory } });
+
+    if (!last.passed && prev && !prev.passed && last.scenarioId !== 'guided') {
+      return pick('guided', 'AD-1', `Attempts ${results.length - 1} and ${results.length} did not pass. Guided practice shows each next step.`);
+    }
+    if (last.passed) {
+      if (SCENARIOS[last.scenarioId].kind === 'drill') {
+        const back = lastCore ? lastCore.scenarioId : 'standard';
+        return pick(back, 'AD-2', `Drill passed (score ${last.score}). Returning to ${SCENARIOS[back].title}.`);
+      }
+      const next = PROGRESSION[last.scenarioId];
+      return pick(next, 'AD-2', next === last.scenarioId
+        ? `Passed ${SCENARIOS[last.scenarioId].title} (score ${last.score}). Highest level reached; repeat to consolidate.`
+        : `Passed ${SCENARIOS[last.scenarioId].title} with no critical violations (score ${last.score}). Unlocking ${SCENARIOS[next].title}.`);
+    }
+    const cat = last.byCategory || {};
+    const v = results.length; // completed-attempt index for messages
+    const critIn = c => (last.criticalCategories || []).includes(c);
+    if ((cat.equipment || 0) >= 2 || critIn('equipment')) {
+      return pick('drill-equipment', 'AD-3', `Attempt ${v} had ${cat.equipment || 0} equipment violation(s). A focused classification drill comes next.`);
+    }
+    if ((cat.screening || 0) >= 2 || critIn('screening')) {
+      return pick('drill-screening', 'AD-4', `Attempt ${v} had ${cat.screening || 0} screening violation(s). A focused screening drill comes next.`);
+    }
+    return pick(last.scenarioId, 'AD-5', `Attempt ${v} did not pass (score ${last.score}, ${last.criticalCount} critical). Repeating ${SCENARIOS[last.scenarioId].title}.`);
+  }
+
+  /* ---------------------------------------------------------------
+   * 8. Serial protocol (newline-delimited JSON, v1)
+   * ------------------------------------------------------------- */
+  const DEVICE_TYPES = ['hello', 'action', 'hb', 'cal', 'err', 'raw', 'log', 'pong', 'imu', 'gesture'];
+  const GESTURES = ['tap', 'double_tap', 'flick_left', 'flick_right'];
+  const MAX_LINE = 512;
+
+  function parseLine(line) {
+    if (typeof line !== 'string') return { ok: false, error: 'NOT_TEXT' };
+    const s = line.trim();
+    if (!s) return { ok: false, error: 'EMPTY' };
+    if (s.length > MAX_LINE) return { ok: false, error: 'TOO_LONG', raw: s.slice(0, 80) };
+    if (s[0] !== '{') return { ok: false, error: 'NOT_JSON', raw: s.slice(0, 80) }; // boot ROM text, etc.
+    let msg;
+    try { msg = JSON.parse(s); } catch (e) { return { ok: false, error: 'BAD_JSON', raw: s.slice(0, 80) }; }
+    if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return { ok: false, error: 'NOT_OBJECT', raw: s.slice(0, 80) };
+    if (msg.v !== undefined && msg.v !== PROTOCOL_VERSION) return { ok: false, error: 'VERSION_MISMATCH', raw: s.slice(0, 80) };
+    if (!DEVICE_TYPES.includes(msg.type)) return { ok: false, error: 'UNKNOWN_TYPE', raw: s.slice(0, 80) };
+    if (msg.type === 'action') {
+      if (typeof msg.event === 'string' && EVENT_ALIASES[msg.event]) msg.event = EVENT_ALIASES[msg.event];
+      if (!ATTEST_EVENTS.includes(msg.event)) return { ok: false, error: 'UNKNOWN_EVENT', raw: s.slice(0, 80) };
+      if (msg.id !== undefined && PAD_EVENT[msg.id] !== msg.event) return { ok: false, error: 'PAD_EVENT_MISMATCH', raw: s.slice(0, 80) };
+      if (!Number.isInteger(msg.seq) || msg.seq < 0) return { ok: false, error: 'BAD_SEQ', raw: s.slice(0, 80) };
+    }
+    if (msg.type === 'imu') {
+      if (!Number.isFinite(msg.r) || !Number.isFinite(msg.p) || Math.abs(msg.r) > 180 || Math.abs(msg.p) > 180) return { ok: false, error: 'BAD_IMU', raw: s.slice(0, 80) };
+    }
+    if (msg.type === 'gesture') {
+      if (!GESTURES.includes(msg.g)) return { ok: false, error: 'UNKNOWN_GESTURE', raw: s.slice(0, 80) };
+      if (!Number.isInteger(msg.seq) || msg.seq < 0) return { ok: false, error: 'BAD_SEQ', raw: s.slice(0, 80) };
+    }
+    return { ok: true, msg };
+  }
+
+  /* Splits an arbitrary stream of text chunks into complete lines. */
+  class LineBuffer {
+    constructor() { this.buf = ''; }
+    push(chunk) {
+      this.buf += chunk;
+      if (this.buf.length > MAX_LINE * 8) this.buf = this.buf.slice(-MAX_LINE); // runaway guard
+      const parts = this.buf.split(/\r?\n/);
+      this.buf = parts.pop();
+      return parts;
+    }
+    reset() { this.buf = ''; }
+  }
+
+  /* Drops duplicate / replayed action messages using (boot, seq). */
+  class SeqTracker {
+    constructor() { this.boot = null; this.last = -1; }
+    hello(boot) { if (boot !== this.boot) { this.boot = boot; this.last = -1; return 'new-boot'; } return 'same-boot'; }
+    check(msg) {
+      if (msg.boot !== undefined && msg.boot !== this.boot) this.hello(msg.boot);
+      if (msg.seq <= this.last) return 'duplicate';
+      const gap = this.last >= 0 && msg.seq > this.last + 1;
+      this.last = msg.seq;
+      return gap ? 'gap' : 'ok';
+    }
+  }
+
+  /* ---------------------------------------------------------------
+   * 9. Report export
+   * ------------------------------------------------------------- */
+  const CSV_COLUMNS = ['session', 'attempt', 'scenario', 'n', 't_ms', 'wall', 'source', 'device_seq', 'pad', 'event', 'target', 'value',
+    'received', 'accepted', 'checkpoint_completed', 'violation_rules', 'severity', 'points', 'feedback_shown', 'notes', 'error'];
+
+  function csvCell(v) {
+    const s = v === null || v === undefined ? '' : String(v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+
+  function toCSV(session) {
+    const rows = [CSV_COLUMNS.join(',')];
+    session.attempts.forEach((a, i) => {
+      for (const o of a.log) {
+        rows.push([
+          session.id, i + 1, a.scenarioId, o.n, o.at, o.wall, o.src, o.devSeq, o.pad, o.event, o.target, o.value,
+          o.received, o.accepted, o.checkpointCompleted || '', o.violations.map(v => v.rule).join(' '),
+          o.violations.map(v => v.severity).join(' '), o.violations.reduce((s, v) => s + v.points, 0),
+          o.feedbackShown, o.notes.join(' | '), o.error || '',
+        ].map(csvCell).join(','));
+      }
+    });
+    return rows.join('\n');
+  }
+
+  return {
+    PROTOCOL_VERSION, PADS, PAD_EVENT, ATTEST_EVENTS, SCENE_EVENTS, EVENT_ALIASES, LABELS, ZONES,
+    SEVERITY, SCORING, RULES, REQ_LABELS, BASIS, ITEMS, PERSONAL_ITEMS, SCENARIOS, PROGRESSION, CHECKPOINTS, ADAPT_RULES,
+    GESTURES, validateEvent, Attempt, Session, recommendNext, parseLine, LineBuffer, SeqTracker, toCSV,
+  };
+});
+
+</script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.min.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const E = window.MRIEngine;
+const gsap = window.gsap;
+gsap.ticker.lagSmoothing(0); // keep animations time-accurate on slow GPUs
+const RM = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const EMBED = document.documentElement.classList.contains('embed');
+const bridge = { linked: false };
+function post(kind, data = {}) { if (EMBED && window.parent !== window) window.parent.postMessage({ mrisafe: 1, kind, ...data }, location.origin); }
+const D = s => (RM ? 0 : s);
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmtT = ms => { const s = Math.max(0, Math.floor(ms / 1000)); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); };
+
+let session = new E.Session({ scenarioId: 'standard' });
+const ui = { selected: null, hover: null, labels: true, zones: true, hintFocus: null, lastFeedback: null, trainerOpen: false };
+
+/* =====================================================================
+ * 3D SCENE
+ * =================================================================== */
+const canvas = $('#scene');
+const viewport = $('#viewport');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+let pixelRatioCap = 1.75;
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, pixelRatioCap));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const labelRenderer = new CSS2DRenderer({ element: $('#labels') });
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#070c14');
+scene.fog = new THREE.Fog('#070c14', 26, 48);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+/* scene colours follow the theme (dark or light) */
+let apronMat = null; // the floor follows the scene colour
+function applySceneTheme() {
+  const c = new THREE.Color(getComputedStyle(document.documentElement).getPropertyValue('--scene-bg').trim() || '#070c14');
+  scene.background = c;
+  if (apronMat) apronMat.color.copy(c);
+  scene.fog = new THREE.Fog(c, 26, 48);
+}
+applySceneTheme();
+window.addEventListener('mrisafe-theme', applySceneTheme);
+
+const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 120);
+const HOME = { pos: new THREE.Vector3(1.9, 10.2, 13.2), target: new THREE.Vector3(1.4, 0.2, -0.1) };
+camera.position.set(15, 19, 24);
+const controls = new OrbitControls(camera, canvas);
+controls.target.copy(HOME.target);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 2.2;
+controls.maxDistance = 30;
+controls.maxPolarAngle = Math.PI * 0.47;
+controls.screenSpacePanning = true;
+
+// Lights
+scene.add(new THREE.HemisphereLight('#bfdcff', '#0a1018', 0.55));
+const key = new THREE.DirectionalLight('#ffffff', 1.7);
+key.position.set(7, 12, 8);
+key.castShadow = true;
+key.shadow.mapSize.set(1536, 1536);
+Object.assign(key.shadow.camera, { left: -11, right: 11, top: 9, bottom: -9, near: 1, far: 40 });
+key.shadow.bias = -0.0004;
+key.shadow.normalBias = 0.02;
+scene.add(key);
+const fill = new THREE.DirectionalLight('#7fb7ff', 0.45);
+fill.position.set(-8, 6, -4);
+scene.add(fill);
+
+// Material factories (each pickable gets its own materials so highlighting stays local)
+const M = {
+  shell: () => new THREE.MeshPhysicalMaterial({ color: '#eef2f6', roughness: 0.3, metalness: 0, clearcoat: 0.7, clearcoatRoughness: 0.18 }),
+  shell2: () => new THREE.MeshStandardMaterial({ color: '#cdd5de', roughness: 0.45 }),
+  dark: () => new THREE.MeshStandardMaterial({ color: '#232e3b', roughness: 0.55, metalness: 0.25 }),
+  metal: () => new THREE.MeshStandardMaterial({ color: '#b7c1cc', roughness: 0.28, metalness: 0.9 }),
+  steel: () => new THREE.MeshStandardMaterial({ color: '#8e98a3', roughness: 0.35, metalness: 0.85 }),
+  plastic: c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.55 }),
+  glow: c => new THREE.MeshBasicMaterial({ color: c, toneMapped: false }),
+};
+
+function mesh(geo, mat, opts = {}) {
+  const m = new THREE.Mesh(geo, mat);
+  m.castShadow = opts.cast !== false;
+  m.receiveShadow = opts.receive !== false;
+  if (opts.pos) m.position.set(...opts.pos);
+  if (opts.rot) m.rotation.set(...opts.rot);
+  return m;
+}
+const rbox = (w, h, d, r = 0.03, seg = 3) => new RoundedBoxGeometry(w, h, d, seg, Math.min(r, w * 0.49, h * 0.49, d * 0.49));
+
+function canvasTexture(w, h, draw) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  draw(ctx, w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  t.userData = { ctx, draw: d => { d(ctx, w, h); t.needsUpdate = true; } };
+  return t;
+}
+
+/* MR labelling symbols (simplified renderings of the ASTM F2503 marks) */
+function drawMRSymbol(ctx, label, x, y, s) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = `800 ${s * 0.34}px Archivo, Arial, sans-serif`;
+  if (label === 'MR_SAFE') {
+    ctx.fillStyle = '#1f9d55'; ctx.fillRect(-s / 2, -s / 2, s, s);
+    ctx.fillStyle = '#fff'; ctx.fillText('MR', 0, s * 0.02);
+  } else if (label === 'MR_CONDITIONAL') {
+    ctx.beginPath(); ctx.moveTo(0, -s / 2); ctx.lineTo(s / 2, s / 2.4); ctx.lineTo(-s / 2, s / 2.4); ctx.closePath();
+    ctx.fillStyle = '#f2c230'; ctx.fill(); ctx.lineWidth = s * 0.07; ctx.strokeStyle = '#111'; ctx.stroke();
+    ctx.fillStyle = '#111'; ctx.fillText('MR', 0, s * 0.12);
+  } else if (label === 'MR_UNSAFE') {
+    ctx.beginPath(); ctx.arc(0, 0, s / 2, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill();
+    ctx.lineWidth = s * 0.1; ctx.strokeStyle = '#d7263d'; ctx.stroke();
+    ctx.fillStyle = '#111'; ctx.fillText('MR', 0, s * 0.02);
+    ctx.beginPath(); ctx.moveTo(-s * 0.33, -s * 0.33); ctx.lineTo(s * 0.33, s * 0.33); ctx.stroke();
+  }
+  ctx.restore();
+}
+function mrSymbolSVG(label, size = 28) {
+  if (label === 'MR_SAFE') return `<svg width="${size}" height="${size}" viewBox="0 0 28 28" aria-hidden="true"><rect x="2" y="2" width="24" height="24" fill="#1f9d55"/><text x="14" y="18.5" text-anchor="middle" font-family="Archivo,Arial" font-weight="800" font-size="10" fill="#fff">MR</text></svg>`;
+  if (label === 'MR_CONDITIONAL') return `<svg width="${size}" height="${size}" viewBox="0 0 28 28" aria-hidden="true"><path d="M14 2 L26.5 24.5 H1.5 Z" fill="#f2c230" stroke="#111" stroke-width="1.6" stroke-linejoin="round"/><text x="14" y="21" text-anchor="middle" font-family="Archivo,Arial" font-weight="800" font-size="8.5" fill="#111">MR</text></svg>`;
+  if (label === 'MR_UNSAFE') return `<svg width="${size}" height="${size}" viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="14" r="11.5" fill="#fff" stroke="#d7263d" stroke-width="2.6"/><text x="14" y="17.5" text-anchor="middle" font-family="Archivo,Arial" font-weight="800" font-size="9" fill="#111">MR</text><path d="M6.5 6.5 L21.5 21.5" stroke="#d7263d" stroke-width="2.6"/></svg>`;
+  return `<svg width="${size}" height="${size}" viewBox="0 0 28 28" aria-hidden="true"><rect x="2.5" y="2.5" width="23" height="23" rx="4" fill="none" stroke="#f4b549" stroke-width="1.6" stroke-dasharray="3 2.5"/><text x="14" y="18.5" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-weight="600" font-size="11" fill="#f4b549">?</text></svg>`;
+}
+
+/* ---------- registry of pickable objects ---------- */
+const objs = {};      // id -> { group, halo, tag, kind, title }
+const pickables = []; // root groups
+
+function haloFor(radius) {
+  const g = new THREE.RingGeometry(radius * 0.92, radius, 64);
+  g.rotateX(-Math.PI / 2);
+  const m = new THREE.MeshBasicMaterial({ color: '#45d6ec', transparent: true, opacity: 0, depthWrite: false, toneMapped: false });
+  const h = new THREE.Mesh(g, m);
+  h.position.y = 0.012;
+  h.renderOrder = 2;
+  return h;
+}
+
+function register(id, group, { kind, title, radius = 0.6, tagY = 1.4, tagText }) {
+  group.userData.pickId = id;
+  const halo = haloFor(radius);
+  group.add(halo);
+  const el = document.createElement('div');
+  el.className = 'tag3d';
+  el.innerHTML = `<span>${esc(tagText || title)}</span>`;
+  const tag = new CSS2DObject(el);
+  tag.position.set(0, tagY, 0);
+  group.add(tag);
+  objs[id] = { group, halo, tag, el, kind, title };
+  pickables.push(group);
+  return objs[id];
+}
+
+/* ---------- room ---------- */
+const ROOM = { x0: -7.6, x1: 9.6, z0: -3.6, z1: 3.6, magX0: -4, magX1: 4, doorZ0: 1.2, doorZ1: 2.7, wallH: 2.5 };
+const zoneGroup = new THREE.Group();
+scene.add(zoneGroup);
+
+function buildRoom() {
+  // Floor
+  const floorTex = canvasTexture(1024, 512, (ctx, w, h) => {
+    ctx.fillStyle = '#0d1724'; ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = 'rgba(120,170,220,0.07)'; ctx.lineWidth = 2;
+    const step = w / 34;
+    for (let x = 0; x <= w; x += step) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
+    for (let y = 0; y <= h; y += step) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+  });
+  const fw = ROOM.x1 - ROOM.x0, fd = ROOM.z1 - ROOM.z0;
+  const floor = mesh(new THREE.PlaneGeometry(fw, fd), new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.82, metalness: 0.05 }), { cast: false });
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set((ROOM.x0 + ROOM.x1) / 2, 0, (ROOM.z0 + ROOM.z1) / 2);
+  scene.add(floor);
+  const apron = mesh(new THREE.PlaneGeometry(60, 40), (apronMat = new THREE.MeshStandardMaterial({ color: '#070c14', roughness: 1 })), { cast: false });
+  apron.rotation.x = -Math.PI / 2; apron.position.y = -0.01;
+  scene.add(apron);
+
+  // Zones (ACR four-zone model, simplified layout)
+  const zones = [
+    { id: 'IV', x0: -4, x1: 4, z0: -3.6, z1: 3.6, color: '#ff5f6f', op: 0.07, label: 'ZONE IV · MAGNET ROOM', lx: -2.6, lz: 3.25 },
+    { id: 'III', x0: -7.6, x1: -4, z0: -3.6, z1: 0.6, color: '#f4b549', op: 0.06, label: 'ZONE III · CONTROL', lx: -5.8, lz: 0.3 },
+    { id: 'III-b', x0: 4, x1: 6.2, z0: -3.6, z1: 3.6, color: '#f4b549', op: 0.06, label: 'ZONE III', lx: 5.1, lz: 3.25 },
+    { id: 'II', x0: 6.2, x1: 9.6, z0: -3.6, z1: 3.6, color: '#45d6ec', op: 0.05, label: 'ZONE II · STAGING', lx: 7.9, lz: 3.25 },
+  ];
+  for (const z of zones) {
+    const w = z.x1 - z.x0, d = z.z1 - z.z0;
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshBasicMaterial({ color: z.color, transparent: true, opacity: z.op, depthWrite: false, toneMapped: false }));
+    p.rotation.x = -Math.PI / 2; p.position.set(z.x0 + w / 2, 0.004, z.z0 + d / 2);
+    zoneGroup.add(p);
+    const inset = 0.06;
+    const pts = [[z.x0 + inset, z.z0 + inset], [z.x1 - inset, z.z0 + inset], [z.x1 - inset, z.z1 - inset], [z.x0 + inset, z.z1 - inset], [z.x0 + inset, z.z0 + inset]]
+      .map(([x, zz]) => new THREE.Vector3(x, 0.008, zz));
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineDashedMaterial({ color: z.color, dashSize: 0.25, gapSize: 0.15, transparent: true, opacity: 0.55 }));
+    line.computeLineDistances();
+    zoneGroup.add(line);
+    const el = document.createElement('div');
+    el.className = 'tag3d zone';
+    el.style.color = z.color;
+    el.textContent = z.label;
+    const t = new CSS2DObject(el);
+    t.position.set(z.lx, 0.05, z.lz);
+    zoneGroup.add(t);
+  }
+
+  // Walls
+  const wallMat = new THREE.MeshStandardMaterial({ color: '#15243a', roughness: 0.9, metalness: 0.05 });
+  const capMat = new THREE.MeshStandardMaterial({ color: '#2a4566', roughness: 0.6 });
+  const T = 0.14, H = ROOM.wallH;
+  const wall = (x0, z0, x1, z1, h = H, y0 = 0) => {
+    const len = Math.hypot(x1 - x0, z1 - z0);
+    const g = new THREE.Group();
+    const w = mesh(new THREE.BoxGeometry(len, h, T), wallMat);
+    w.position.y = y0 + h / 2;
+    const cap = mesh(new THREE.BoxGeometry(len, 0.03, T + 0.02), capMat);
+    cap.position.y = y0 + h + 0.015;
+    g.add(w, cap);
+    g.position.set((x0 + x1) / 2, 0, (z0 + z1) / 2);
+    g.rotation.y = -Math.atan2(z1 - z0, x1 - x0);
+    scene.add(g);
+    return g;
+  };
+  wall(ROOM.x0, ROOM.z0, ROOM.x1, ROOM.z0);                 // back wall
+  wall(ROOM.x0, ROOM.z0, ROOM.x0, 0.6, H);                    // control room west
+  wall(ROOM.x0, 0.6, -4, 0.6, 0.9);                           // control room front (cut-away)
+  // Magnet room west wall with RF window (z -2.7 .. -0.7)
+  wall(-4, ROOM.z0, -4, -2.7); wall(-4, -0.7, -4, 0.6);
+  wall(-4, -2.7, -4, -0.7, 0.95);                             // sill
+  wall(-4, -2.7, -4, -0.7, 0.35, H - 0.35);                   // header
+  wall(-4, 0.6, -4, ROOM.z1, 0.9);                            // low wall in front
+  const glass = mesh(new THREE.PlaneGeometry(2.0, H - 1.3), new THREE.MeshPhysicalMaterial({ color: '#7fc4ff', transparent: true, opacity: 0.16, roughness: 0.05, metalness: 0, side: THREE.DoubleSide, depthWrite: false }), { cast: false });
+  glass.position.set(-4, 0.95 + (H - 1.3) / 2, -1.7); glass.rotation.y = Math.PI / 2;
+  scene.add(glass);
+  // RF screen mesh hint on glass
+  const meshTex = canvasTexture(256, 256, (ctx, w, h) => {
+    ctx.clearRect(0, 0, w, h); ctx.strokeStyle = 'rgba(160,210,255,0.22)'; ctx.lineWidth = 1;
+    for (let i = 0; i < w; i += 8) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, h); ctx.stroke(); ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(w, i); ctx.stroke(); }
+  });
+  meshTex.wrapS = meshTex.wrapT = THREE.RepeatWrapping; meshTex.repeat.set(4, 3);
+  const rf = mesh(new THREE.PlaneGeometry(2.0, H - 1.3), new THREE.MeshBasicMaterial({ map: meshTex, transparent: true, depthWrite: false, side: THREE.DoubleSide }), { cast: false });
+  rf.position.copy(glass.position); rf.position.x += 0.01; rf.rotation.y = Math.PI / 2;
+  scene.add(rf);
+  // Magnet room east wall with door opening
+  wall(4, ROOM.z0, 4, ROOM.doorZ0);
+  wall(4, ROOM.doorZ0, 4, ROOM.doorZ1, 0.3, H - 0.3);        // lintel
+  wall(4, ROOM.doorZ1, 4, ROOM.z1, 0.9);
+  // Door frame (copper RF gasket tone) and open door leaf
+  const frameMat = new THREE.MeshStandardMaterial({ color: '#b07a52', roughness: 0.35, metalness: 0.8 });
+  for (const z of [ROOM.doorZ0, ROOM.doorZ1]) scene.add(mesh(new THREE.BoxGeometry(0.2, H - 0.3, 0.05), frameMat, { pos: [4, (H - 0.3) / 2, z] }));
+  const leaf = mesh(rbox(0.06, H - 0.36, 1.4, 0.02), new THREE.MeshStandardMaterial({ color: '#d9e0e8', roughness: 0.4 }));
+  leaf.position.set(4.62, (H - 0.36) / 2, ROOM.doorZ0 + 0.1);
+  leaf.rotation.y = -1.2;
+  scene.add(leaf);
+
+  // Door sign (Zone III side)
+  const signTex = canvasTexture(512, 360, (ctx, w, h) => {
+    ctx.fillStyle = '#fffaf0'; ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#c8102e'; ctx.fillRect(0, 0, w, 92);
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = '800 52px Archivo, Arial';
+    ctx.fillText('ZONE IV', w / 2, 66);
+    ctx.fillStyle = '#111'; ctx.font = '700 36px Archivo, Arial';
+    ctx.fillText('MAGNET IS ALWAYS ON', w / 2, 150);
+    ctx.font = '500 26px Archivo, Arial';
+    ctx.fillText('Screened people and MR Safe /', w / 2, 210);
+    ctx.fillText('MR Conditional items only', w / 2, 246);
+    drawMRSymbol(ctx, 'MR_UNSAFE', w / 2, 304, 72);
+  });
+  const sign = mesh(new THREE.PlaneGeometry(0.62, 0.44), new THREE.MeshStandardMaterial({ map: signTex, roughness: 0.6 }), { cast: false });
+  sign.position.set(4.085, 1.65, ROOM.doorZ0 - 0.55); sign.rotation.y = Math.PI / 2;
+  scene.add(sign);
+}
+
+/* ---------- scanner ---------- */
+const BORE = { y: 1.12, z: -1.0, r: 0.42 };
+const scannerParts = {};
+
+function roundedRectShape(x0, y0, x1, y1, r) {
+  const s = new THREE.Shape();
+  s.moveTo(x0 + r, y0);
+  s.lineTo(x1 - r, y0); s.absarc(x1 - r, y0 + r, r, -Math.PI / 2, 0, false);
+  s.lineTo(x1, y1 - r); s.absarc(x1 - r, y1 - r, r, 0, Math.PI / 2, false);
+  s.lineTo(x0 + r, y1); s.absarc(x0 + r, y1 - r, r, Math.PI / 2, Math.PI, false);
+  s.lineTo(x0, y0 + r); s.absarc(x0 + r, y0 + r, r, Math.PI, Math.PI * 1.5, false);
+  return s;
+}
+
+function buildScanner() {
+  const g = new THREE.Group();
+  g.position.set(0, BORE.y, BORE.z);
+  const holeR = BORE.r + 0.03;
+  const shroudShape = () => {
+    const s = roundedRectShape(-1.16, -1.02, 1.16, 1.14, 0.5);
+    s.holes.push(new THREE.Path().absarc(0, 0, holeR, 0, Math.PI * 2, true));
+    return s;
+  };
+  const shroudGeo = new THREE.ExtrudeGeometry(shroudShape(), { depth: 0.22, bevelEnabled: true, bevelThickness: 0.08, bevelSize: 0.06, bevelSegments: 6, curveSegments: 56 });
+  const shellMat = M.shell();
+  const front = mesh(shroudGeo, shellMat); front.position.z = 0.6;
+  const rear = mesh(shroudGeo, shellMat); rear.position.z = -0.84;
+  const bodyShape = roundedRectShape(-1.1, -0.99, 1.1, 1.08, 0.46);
+  bodyShape.holes.push(new THREE.Path().absarc(0, 0, holeR, 0, Math.PI * 2, true));
+  const body = mesh(new THREE.ExtrudeGeometry(bodyShape, { depth: 1.2, bevelEnabled: false, curveSegments: 56 }), M.shell2());
+  body.position.z = -0.6;
+  // Bore liner
+  const linerGeo = new THREE.CylinderGeometry(BORE.r, BORE.r, 1.96, 72, 1, true); linerGeo.rotateX(Math.PI / 2);
+  const liner = mesh(linerGeo, new THREE.MeshStandardMaterial({ color: '#f2f5f8', roughness: 0.5, side: THREE.DoubleSide }));
+  // Front face plate (recessed dark annulus) and flare
+  const face = mesh(new THREE.RingGeometry(holeR + 0.01, 0.74, 96), new THREE.MeshStandardMaterial({ color: '#1e2935', roughness: 0.35, metalness: 0.5 }), { cast: false });
+  face.position.z = 0.905;
+  const flareGeo = new THREE.TorusGeometry(BORE.r + 0.025, 0.035, 18, 96);
+  const flare = mesh(flareGeo, M.shell()); flare.position.z = 0.9;
+  const flareRear = mesh(flareGeo, M.shell()); flareRear.position.z = -0.92;
+  const glowRing = mesh(new THREE.RingGeometry(0.742, 0.758, 128), M.glow('#45d6ec'), { cast: false });
+  glowRing.position.z = 0.907;
+  const innerGlow = mesh(new THREE.RingGeometry(holeR + 0.012, holeR + 0.022, 96), M.glow('#45d6ec'), { cast: false });
+  innerGlow.position.z = 0.908;
+  scannerParts.glow = [glowRing.material, innerGlow.material];
+  // Front control panels
+  const panelMat = M.dark();
+  for (const sx of [-1, 1]) {
+    const p = mesh(rbox(0.3, 0.17, 0.05, 0.02), panelMat, { pos: [sx * 0.86, -0.64, 0.93] });
+    const scr = mesh(new THREE.PlaneGeometry(0.15, 0.075), M.glow('#1b8fa5'), { cast: false, pos: [sx * 0.86 - 0.05, -0.64, 0.957] });
+    g.add(p, scr);
+    for (let i = 0; i < 3; i++) g.add(mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.012, 16), M.glow(i === 0 ? '#3fd99a' : '#c9d4df'), { cast: false, pos: [sx * 0.86 + 0.06, -0.6 - i * 0.03, 0.958], rot: [Math.PI / 2, 0, 0] }));
+  }
+  // Side seam and plinth
+  const seamMat = M.dark();
+  for (const sx of [-1, 1]) g.add(mesh(new THREE.BoxGeometry(0.02, 1.7, 1.15), seamMat, { pos: [sx * 1.105, 0.04, 0] }));
+  const plinth = mesh(new THREE.BoxGeometry(1.9, 0.1, 1.85), M.dark(), { pos: [0, -1.07, 0] });
+  // Name plate
+  const plateTex = canvasTexture(512, 64, (ctx, w, h) => {
+    ctx.fillStyle = '#e6ebf0'; ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#6a7a8b'; ctx.font = '600 28px "IBM Plex Mono", monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('SCHEMATIC MR SYSTEM', w / 2, h / 2 + 2);
+  });
+  const plate = mesh(new THREE.PlaneGeometry(0.62, 0.078), new THREE.MeshStandardMaterial({ map: plateTex, roughness: 0.5 }), { cast: false, pos: [0, 0.93, 0.905] });
+  // Bore light
+  const boreLight = new THREE.PointLight('#8be9ff', 0.6, 2.6, 2);
+  boreLight.position.set(0, 0.25, 0.1);
+  scannerParts.boreLight = boreLight;
+  g.add(front, rear, body, liner, face, flare, flareRear, glowRing, innerGlow, plinth, plate, boreLight);
+  scannerParts.procedural = [front, rear, body, liner, face, flare, flareRear, plinth, plate];
+  scene.add(g);
+  register('gantry', g, { kind: 'info', title: 'MR scanner (gantry)', radius: 1.6, tagY: 1.45 });
+  objs.gantry.halo.position.y = 0.012 - BORE.y;
+  return g;
+}
+
+/* ---------- patient table, cradle, patient ---------- */
+const TABLE = { topY: 0.77, z: 1.12 };
+let cradle, personalMeshes = {};
+function buildTable() {
+  const g = new THREE.Group();
+  const shell = M.shell();
+  g.add(mesh(rbox(0.6, 0.66, 1.25, 0.08, 4), shell, { pos: [0, 0.33, 1.45] }));
+  g.add(mesh(rbox(0.66, 0.05, 1.5, 0.02), M.dark(), { pos: [0, 0.68, 1.45] }));
+  g.add(mesh(rbox(0.58, 0.06, 2.45, 0.03), shell, { pos: [0, TABLE.topY - 0.03, 1.0] }));
+  scene.add(g);
+
+  cradle = new THREE.Group();
+  scene.add(cradle);
+  const mattress = mesh(rbox(0.46, 0.06, 2.05, 0.03, 4), M.plastic('#2c6a96'), { pos: [0, TABLE.topY + 0.03, 1.12] });
+  cradle.add(mattress);
+  // Head coil
+  const coilMat = M.plastic('#e9eef3');
+  const coilAccent = M.plastic('#45a9c9');
+  cradle.add(mesh(rbox(0.36, 0.05, 0.42, 0.02), coilMat, { pos: [0, TABLE.topY + 0.085, 0.36] }));
+  for (const z of [0.22, 0.36, 0.5]) {
+    const arch = mesh(new THREE.TorusGeometry(0.17, 0.018, 10, 32, Math.PI), z === 0.36 ? coilAccent : coilMat, { pos: [0, TABLE.topY + 0.11, z] });
+    cradle.add(arch);
+  }
+  cradle.add(mesh(new THREE.BoxGeometry(0.03, 0.03, 0.32), coilMat, { pos: [0, TABLE.topY + 0.28, 0.36] }));
+
+  // Patient (supine, head first)
+  const p = new THREE.Group();
+  const gown = M.plastic('#79a9cc');
+  const skin = M.plastic('#c8987a');
+  const y0 = TABLE.topY + 0.06;
+  p.add(mesh(new THREE.SphereGeometry(0.1, 32, 24), skin, { pos: [0, y0 + 0.13, 0.36] }));
+  p.add(mesh(new THREE.CapsuleGeometry(0.15, 0.48, 8, 24), gown, { pos: [0, y0 + 0.15, 0.86], rot: [Math.PI / 2, 0, 0] }));
+  p.add(mesh(new THREE.CapsuleGeometry(0.05, 0.44, 6, 16), gown, { pos: [-0.215, y0 + 0.1, 0.93], rot: [Math.PI / 2, 0, 0] }));
+  p.add(mesh(new THREE.CapsuleGeometry(0.05, 0.44, 6, 16), gown, { pos: [0.215, y0 + 0.1, 0.93], rot: [Math.PI / 2, 0, 0] }));
+  p.add(mesh(new THREE.SphereGeometry(0.045, 16, 12), skin, { pos: [0.215, y0 + 0.1, 1.24] }));
+  p.add(mesh(new THREE.SphereGeometry(0.045, 16, 12), skin, { pos: [-0.215, y0 + 0.1, 1.24] }));
+  p.add(mesh(rbox(0.36, 0.14, 0.95, 0.06, 4), M.plastic('#9cc0de'), { pos: [0, y0 + 0.09, 1.66] }));      // blanket over legs
+  p.add(mesh(new THREE.TorusGeometry(0.05, 0.012, 8, 24), M.plastic('#f4f6f8'), { pos: [0.215, y0 + 0.1, 1.19], rot: [0, 0, 0] })); // wristband
+  // Personal items (shown only when the scenario includes them)
+  personalMeshes.phone = mesh(rbox(0.075, 0.014, 0.15, 0.008), M.plastic('#15181d'), { pos: [0.09, y0 + 0.305, 1.0] });
+  const scr = mesh(new THREE.PlaneGeometry(0.062, 0.13), M.glow('#3a6fd8'), { cast: false, pos: [0, 0.008, 0], rot: [-Math.PI / 2, 0, 0] });
+  personalMeshes.phone.add(scr);
+  personalMeshes.hairclip = mesh(new THREE.TorusGeometry(0.035, 0.008, 8, 24, Math.PI * 1.4), new THREE.MeshStandardMaterial({ color: '#d4b36a', metalness: 0.9, roughness: 0.25 }), { pos: [0.06, y0 + 0.22, 0.31], rot: [0.4, 0, 0.3] });
+  p.add(personalMeshes.phone, personalMeshes.hairclip);
+  cradle.add(p);
+  register('patient', cradle, { kind: 'patient', title: 'Patient on table', radius: 0.9, tagY: 1.55, tagText: 'Patient' });
+  objs.patient.halo.position.set(0, 0.012, 1.25);
+  objs.patient.tag.position.set(0, 1.45, 1.15);
+}
+
+/* ---------- console (Zone III) ---------- */
+let consoleTex;
+function buildConsole() {
+  const g = new THREE.Group();
+  g.position.set(-5.8, 0, -2.9);
+  g.add(mesh(rbox(2.3, 0.06, 0.8, 0.02), M.plastic('#d5dde6'), { pos: [0, 0.74, 0] }));
+  for (const x of [-1.05, 1.05]) g.add(mesh(new THREE.BoxGeometry(0.06, 0.72, 0.7), M.dark(), { pos: [x, 0.36, 0] }));
+  consoleTex = canvasTexture(640, 400, () => {});
+  const scrMat = new THREE.MeshBasicMaterial({ map: consoleTex, toneMapped: false });
+  for (const x of [-0.5, 0.5]) {
+    const mon = new THREE.Group();
+    mon.position.set(x, 1.08, -0.12);
+    mon.rotation.y = x < 0 ? 0.12 : -0.12;
+    mon.add(mesh(rbox(0.86, 0.54, 0.04, 0.015), M.dark()));
+    const s = mesh(new THREE.PlaneGeometry(0.8, 0.5), x < 0 ? scrMat : new THREE.MeshBasicMaterial({ map: makeSequenceTex(), toneMapped: false }), { cast: false, pos: [0, 0, 0.022] });
+    mon.add(s);
+    mon.add(mesh(new THREE.BoxGeometry(0.06, 0.3, 0.04), M.dark(), { pos: [0, -0.33, -0.02] }));
+    g.add(mon);
+  }
+  g.add(mesh(rbox(0.5, 0.03, 0.17, 0.01), M.dark(), { pos: [0, 0.785, 0.18] }));
+  // Chair
+  g.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.42, 12), M.metal(), { pos: [0, 0.22, 0.75] }));
+  g.add(mesh(rbox(0.46, 0.08, 0.44, 0.04), M.plastic('#26364a'), { pos: [0, 0.47, 0.75] }));
+  g.add(mesh(rbox(0.44, 0.5, 0.07, 0.04), M.plastic('#26364a'), { pos: [0, 0.78, 0.98] }));
+  scene.add(g);
+  register('console', g, { kind: 'record', title: 'Operator console', radius: 1.3, tagY: 1.6, tagText: 'Console · patient record' });
+}
+function makeSequenceTex() {
+  return canvasTexture(640, 400, (ctx, w, h) => {
+    ctx.fillStyle = 'var(--bg-deep)'; ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#45d6ec'; ctx.font = '600 22px "IBM Plex Mono", monospace'; ctx.fillText('SEQUENCE PLAN · TRAINING', 24, 40);
+    ctx.fillStyle = '#7f93a8'; ctx.font = '500 18px "IBM Plex Mono", monospace';
+    ['1  Localizer', '2  T1 axial', '3  T2 axial', '4  FLAIR'].forEach((t, i) => ctx.fillText(t, 24, 92 + i * 38));
+    ctx.fillStyle = '#56697e'; ctx.font = '500 15px "IBM Plex Mono", monospace';
+    ctx.fillText('Placeholder only. No imaging is simulated.', 24, h - 28);
+  });
+}
+
+function drawConsole() {
+  if (!consoleTex) return;
+  const a = session.current;
+  consoleTex.userData.draw((ctx, w, h) => {
+    ctx.fillStyle = 'var(--bg-deep)'; ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#0e1d2c'; ctx.fillRect(0, 0, w, 58);
+    ctx.fillStyle = '#45d6ec'; ctx.font = '700 24px Archivo, Arial'; ctx.fillText('PRE-SCAN SAFETY', 22, 38);
+    ctx.fillStyle = '#7f93a8'; ctx.font = '500 16px "IBM Plex Mono", monospace'; ctx.textAlign = 'right';
+    ctx.fillText(`${a.patient.name} · ${a.patient.mrn}`, w - 22, 36); ctx.textAlign = 'left';
+    let y = 98;
+    for (const id of a.order) {
+      const st = a.checkpoints[id].status;
+      const def = E.CHECKPOINTS[id];
+      ctx.fillStyle = st === 'done' ? '#3fd99a' : (a.checkpoints[id].incorrect ? '#f4b549' : '#2a3d52');
+      ctx.beginPath(); ctx.arc(34, y - 7, 9, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = st === 'done' ? '#dbe6f1' : '#8297ad'; ctx.font = '600 21px Archivo, Arial';
+      ctx.fillText(`${def.pad}  ${def.title}`, 56, y);
+      y += 50;
+    }
+    ctx.fillStyle = '#56697e'; ctx.font = '500 15px "IBM Plex Mono", monospace';
+    const scanning = a.checkpoints.SCAN && a.checkpoints.SCAN.status === 'done';
+    ctx.fillStyle = scanning ? '#45d6ec' : '#56697e';
+    ctx.fillText(scanning ? 'TABLE IN BORE · SIMULATED · NO FIELD MODEL' : `SCORE ${a.score()} · ${a.scenario.title.toUpperCase()}`, 22, h - 24);
+  });
+}
+
+/* ---------- equipment items ---------- */
+const SLOTS = {
+  o2:         { ZONE_IV: [2.75, 2.35], ZONE_II: [8.8, -0.3] },
+  ivpole:     { ZONE_IV: [-1.15, 1.75], ZONE_II: [7.1, -2.4] },
+  wheelchair: { ZONE_IV: [2.6, -1.9], ZONE_II: [7.3, 1.1] },
+  pads:       { ZONE_IV: [1.15, 2.85], ZONE_II: [8.8, 2.5] },
+  pump:       { ZONE_IV: [-1.6, 2.85], ZONE_II: [8.9, -2.6] },
+};
+const DOOR_IN = new THREE.Vector3(3.3, 0, 1.95);
+const DOOR_OUT = new THREE.Vector3(4.8, 0, 1.95);
+const STAGING_LANE = new THREE.Vector3(6.6, 0, 1.95);   // clears the bench in Zone III
+const ROOM_LANE = new THREE.Vector3(2.6, 0, 3.05);      // routes around the patient table
+
+function tagSprite(label, size = 0.2) {
+  const tex = canvasTexture(128, 128, (ctx, w) => { ctx.clearRect(0, 0, w, w); drawMRSymbol(ctx, label, 64, 64, 104); });
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthWrite: false }));
+  s.scale.set(size, size, size);
+  return s;
+}
+
+function buildItem(id) {
+  const g = new THREE.Group();
+  const info = E.ITEMS[id];
+  if (id === 'o2') {
+    const frame = M.steel();
+    g.add(mesh(rbox(0.36, 0.04, 0.3, 0.01), frame, { pos: [0, 0.1, 0] }));
+    for (const sx of [-1, 1]) {
+      g.add(mesh(new THREE.TorusGeometry(0.075, 0.025, 10, 24), M.dark(), { pos: [sx * 0.2, 0.08, -0.08], rot: [0, Math.PI / 2, 0] }));
+      g.add(mesh(new THREE.CylinderGeometry(0.012, 0.012, 1.0, 10), frame, { pos: [sx * 0.15, 0.6, -0.13] }));
+    }
+    g.add(mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.32, 10), frame, { pos: [0, 1.1, -0.13], rot: [0, 0, Math.PI / 2] }));
+    g.add(mesh(new THREE.CylinderGeometry(0.095, 0.095, 0.8, 32), new THREE.MeshStandardMaterial({ color: '#2f7d55', metalness: 0.6, roughness: 0.35 }), { pos: [0, 0.52, 0] }));
+    g.add(mesh(new THREE.SphereGeometry(0.095, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#f1f3f5', metalness: 0.4, roughness: 0.3 }), { pos: [0, 0.92, 0] }));
+    g.add(mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.1, 16), M.metal(), { pos: [0, 1.03, 0] }));
+  } else if (id === 'wheelchair') {
+    const chrome = M.metal();
+    g.add(mesh(rbox(0.46, 0.05, 0.42, 0.02), M.plastic('#1e2833'), { pos: [0, 0.5, 0] }));
+    g.add(mesh(rbox(0.46, 0.42, 0.04, 0.02), M.plastic('#1e2833'), { pos: [0, 0.76, -0.21], rot: [-0.12, 0, 0] }));
+    for (const sx of [-1, 1]) {
+      g.add(mesh(new THREE.TorusGeometry(0.29, 0.022, 10, 40), M.dark(), { pos: [sx * 0.27, 0.3, -0.05], rot: [0, Math.PI / 2, 0] }));
+      g.add(mesh(new THREE.TorusGeometry(0.25, 0.008, 6, 40), chrome, { pos: [sx * 0.3, 0.3, -0.05], rot: [0, Math.PI / 2, 0] }));
+      g.add(mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.03, 16), M.dark(), { pos: [sx * 0.2, 0.06, 0.26], rot: [0, 0, Math.PI / 2] }));
+      g.add(mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.9, 8), chrome, { pos: [sx * 0.23, 0.55, -0.24], rot: [-0.12, 0, 0] }));
+      g.add(mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.42, 8), chrome, { pos: [sx * 0.23, 0.62, 0], rot: [Math.PI / 2, 0, 0] }));
+      g.add(mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.42, 8), chrome, { pos: [sx * 0.2, 0.28, 0.24], rot: [0.5, 0, 0] }));
+    }
+  } else if (id === 'ivpole') {
+    const alu = new THREE.MeshStandardMaterial({ color: '#c9d1da', metalness: 0.7, roughness: 0.3 });
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2;
+      const leg = mesh(new THREE.BoxGeometry(0.3, 0.025, 0.04), M.plastic('#dfe5eb'), { pos: [Math.cos(a) * 0.15, 0.06, Math.sin(a) * 0.15] });
+      leg.rotation.y = -a;
+      g.add(leg);
+      g.add(mesh(new THREE.SphereGeometry(0.03, 12, 8), M.dark(), { pos: [Math.cos(a) * 0.29, 0.03, Math.sin(a) * 0.29] }));
+    }
+    g.add(mesh(new THREE.CylinderGeometry(0.016, 0.016, 1.85, 12), alu, { pos: [0, 1.0, 0] }));
+    for (const r of [0, Math.PI]) {
+      const hook = mesh(new THREE.TorusGeometry(0.06, 0.008, 6, 16, Math.PI), alu, { pos: [Math.cos(r) * 0.06, 1.92, 0], rot: [0, r, 0] });
+      g.add(hook);
+    }
+    g.add(mesh(rbox(0.12, 0.2, 0.04, 0.02), new THREE.MeshPhysicalMaterial({ color: '#dbefff', transparent: true, opacity: 0.6, roughness: 0.1 }), { pos: [0.06, 1.72, 0] }));
+  } else if (id === 'pads') {
+    const foam = M.plastic('#3aa0b8');
+    g.add(mesh(rbox(0.5, 0.36, 0.34, 0.03), M.plastic('#e7ecf1'), { pos: [0, 0.18, 0] }));
+    g.add(mesh(rbox(0.46, 0.08, 0.3, 0.035), foam, { pos: [0, 0.41, 0] }));
+    g.add(mesh(rbox(0.4, 0.07, 0.26, 0.03), M.plastic('#2f8aa1'), { pos: [0, 0.485, 0] }));
+    const wedge = new THREE.Shape(); wedge.moveTo(-0.15, 0); wedge.lineTo(0.15, 0); wedge.lineTo(-0.15, 0.12); wedge.closePath();
+    g.add(mesh(new THREE.ExtrudeGeometry(wedge, { depth: 0.22, bevelEnabled: true, bevelSize: 0.01, bevelThickness: 0.01, bevelSegments: 2 }), foam, { pos: [0, 0.53, -0.11] }));
+  } else if (id === 'pump') {
+    g.add(mesh(new THREE.CylinderGeometry(0.018, 0.018, 1.2, 10), M.steel(), { pos: [0, 0.64, 0] }));
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 + 0.4;
+      const leg = mesh(new THREE.BoxGeometry(0.26, 0.025, 0.035), M.steel(), { pos: [Math.cos(a) * 0.13, 0.06, Math.sin(a) * 0.13] });
+      leg.rotation.y = -a; g.add(leg);
+      g.add(mesh(new THREE.SphereGeometry(0.03, 12, 8), M.dark(), { pos: [Math.cos(a) * 0.25, 0.03, Math.sin(a) * 0.25] }));
+    }
+    g.add(mesh(rbox(0.24, 0.2, 0.15, 0.02), M.plastic('#d8dee5'), { pos: [0, 1.05, 0.06] }));
+    g.add(mesh(new THREE.PlaneGeometry(0.13, 0.07), M.glow('#5ad18e'), { cast: false, pos: [-0.03, 1.08, 0.137] }));
+    g.add(mesh(rbox(0.05, 0.08, 0.02, 0.008), M.plastic('#f4b549'), { pos: [0.08, 1.04, 0.14] }));
+  }
+  if (info.labelShown) {
+    const s = tagSprite(info.labelShown, 0.2);
+    const topY = { o2: 1.0, wheelchair: 1.0, ivpole: 1.45, pads: 0.75, pump: 1.3 }[id];
+    s.position.set(0.22, topY, 0.12);
+    g.add(s);
+  }
+  scene.add(g);
+  const tagY = { o2: 1.45, wheelchair: 1.3, ivpole: 2.25, pads: 0.95, pump: 1.6 }[id];
+  register(id, g, { kind: 'item', title: info.name, radius: id === 'wheelchair' ? 0.5 : 0.36, tagY });
+  return g;
+}
+
+/* ---------- locker & misc ---------- */
+function buildExtras() {
+  const g = new THREE.Group();
+  g.position.set(5.4, 0, -3.1);
+  for (let i = 0; i < 3; i++) {
+    g.add(mesh(rbox(0.42, 1.8, 0.5, 0.02), M.plastic(i === 1 ? '#3a5672' : '#2d4560'), { pos: [i * 0.44 - 0.44, 0.9, 0] }));
+    g.add(mesh(new THREE.BoxGeometry(0.02, 0.12, 0.02), M.metal(), { pos: [i * 0.44 - 0.3, 1.0, 0.26] }));
+  }
+  scene.add(g);
+  register('locker', g, { kind: 'info', title: 'Patient lockers', radius: 0.8, tagY: 2.15 });
+  const bench = mesh(rbox(1.3, 0.08, 0.4, 0.03), M.plastic('#2b3f57'), { pos: [5.2, 0.45, 0.3] });
+  scene.add(bench);
+  for (const x of [4.7, 5.7]) scene.add(mesh(new THREE.BoxGeometry(0.05, 0.42, 0.34), M.dark(), { pos: [x, 0.21, 0.3] }));
+}
+
+/* ---------- optional real scanner model ---------- */
+function tryLoadGLB() {
+  const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+  if (!local) return;
+  new GLTFLoader().load('models/scanner.glb', gltf => {
+    const model = gltf.scene;
+    const box = new THREE.Box3().setFromObject(model);
+    const size = box.getSize(new THREE.Vector3());
+    const scale = 2.3 / Math.max(size.x, 0.001);
+    model.scale.setScalar(scale);
+    const b2 = new THREE.Box3().setFromObject(model);
+    const c = b2.getCenter(new THREE.Vector3());
+    model.position.set(-c.x, -b2.min.y - BORE.y, -c.z);
+    model.traverse(o => { if (o.isMesh) { o.castShadow = o.receiveShadow = true; } });
+    for (const m of scannerParts.procedural) m.visible = false;
+    objs.gantry.group.add(model);
+    toast('Loaded models/scanner.glb in place of the procedural gantry.');
+  }, undefined, () => { /* no model supplied: keep the procedural scanner */ });
+}
+
+buildRoom();
+buildScanner();
+buildTable();
+buildConsole();
+for (const id of Object.keys(E.ITEMS)) buildItem(id);
+buildExtras();
+tryLoadGLB();
+
+/* ---------- resize & render loop ---------- */
+function resize() {
+  const r = viewport.getBoundingClientRect();
+  const w = Math.max(1, r.width), h = Math.max(1, r.height);
+  renderer.setSize(w, h, false);
+  labelRenderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(viewport);
+resize();
+
+const clock = new THREE.Clock();
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+let pointerDirty = false, pointerInside = false;
+
+/* Adaptive quality: if frames are slow (integrated GPU, software rendering),
+ * drop pixel ratio, then shadows, so interaction stays responsive. */
+const perf = { frames: 0, acc: 0, step: 0, first: true };
+function adaptQuality(dt) {
+  perf.frames++; perf.acc += dt;
+  if (perf.frames < 45) return;
+  const avg = perf.acc / perf.frames; perf.frames = 0; perf.acc = 0;
+  if (avg > 0.045 && perf.step === 0) { perf.step = 1; pixelRatioCap = 1; renderer.setPixelRatio(1); resize(); }
+  else if (avg > 0.045 && perf.step === 1) { perf.step = 2; renderer.shadowMap.enabled = false; scene.traverse(o => { if (o.material) o.material.needsUpdate = true; }); }
+}
+
+function animate() {
+  const dt = clock.getDelta();
+  const t = clock.elapsedTime;
+  if (ui.paused) { requestAnimationFrame(animate); return; }
+  adaptQuality(dt);
+  controls.update();
+  if (pointerDirty) { pointerDirty = false; updateHover(); }
+  // Hint pulse and glow breathing
+  for (const id in objs) applyHalo(id, t);
+  if (scannerParts.glow && !scanning) {
+    const k = 0.75 + 0.25 * Math.sin(t * 1.6);
+    for (const m of scannerParts.glow) m.color.setRGB(0.27 * k, 0.84 * k, 0.93 * k);
+  }
+  renderer.render(scene, camera);
+  labelRenderer.render(scene, camera);
+  if (perf.first) { perf.first = false; const l = $('#loading'); gsap.to(l, { opacity: 0, duration: D(0.4), onComplete: () => { l.hidden = true; } }); }
+  requestAnimationFrame(animate);
+}
+
+/* ---------- highlight ---------- */
+const flashes = {}; // id -> expiry time (bad flash)
+function applyHalo(id, t) {
+  const o = objs[id];
+  if (!o.group.visible) return;
+  let color = '#45d6ec', op = 0;
+  if (flashes[id] && flashes[id] > t) { color = '#ff5f6f'; op = 0.55 + 0.4 * Math.sin(t * 14); }
+  else if (ui.selected === id) { op = 0.95; }
+  else if (ui.hintFocus === id) { color = '#f4b549'; op = 0.45 + 0.4 * Math.sin(t * 4); }
+  else if (ui.hover === id) { op = 0.5; }
+  o.halo.material.color.set(color);
+  o.halo.material.opacity = op;
+  const em = ui.selected === id ? 0.05 : ui.hover === id ? 0.035 : 0;
+  if (o._em !== em) {
+    o._em = em;
+    o.group.traverse(m => { if (m.isMesh && m.material && m.material.emissive && m !== o.halo) { m.material.emissive.set('#45d6ec'); m.material.emissiveIntensity = em; } });
+  }
+}
+function flash(id) { if (objs[id]) flashes[id] = clock.elapsedTime + 2.2; }
+
+/* ---------- picking ---------- */
+function pickAt() {
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(pickables.filter(g => g.visible), true);
+  for (const h of hits) {
+    let o = h.object;
+    if (o === objs[o.parent?.userData?.pickId]?.halo) continue;
+    while (o && !o.userData.pickId) o = o.parent;
+    if (o && o.visible) return o.userData.pickId;
+  }
+  return null;
+}
+const tip = $('#hover-tip');
+let lastPointer = { x: 0, y: 0 };
+function updateHover() {
+  const id = pointerInside ? pickAt() : null;
+  ui.hover = id;
+  canvas.style.cursor = id ? 'pointer' : 'grab';
+  if (id) {
+    tip.hidden = false;
+    tip.textContent = objs[id].title;
+    tip.style.left = lastPointer.x + 'px';
+    tip.style.top = lastPointer.y + 'px';
+  } else tip.hidden = true;
+}
+let downAt = null;
+canvas.addEventListener('pointermove', e => {
+  const r = canvas.getBoundingClientRect();
+  pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  lastPointer = { x: e.clientX - r.left, y: e.clientY - r.top };
+  pointerInside = true; pointerDirty = true;
+});
+canvas.addEventListener('pointerleave', () => { pointerInside = false; pointerDirty = true; });
+canvas.addEventListener('pointerdown', e => { downAt = { x: e.clientX, y: e.clientY }; });
+canvas.addEventListener('pointerup', e => {
+  if (!downAt) return;
+  const moved = Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y);
+  downAt = null;
+  if (moved > 6) return;
+  const r = canvas.getBoundingClientRect();
+  pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  const id = pickAt();
+  if (id) select(id); else deselect();
+});
+
+/* ---------- camera moves ---------- */
+let camTween = null;
+function flyTo(pos, target, dur = 1.1) {
+  if (camTween) camTween.kill();
+  const from = { px: camera.position.x, py: camera.position.y, pz: camera.position.z, tx: controls.target.x, ty: controls.target.y, tz: controls.target.z };
+  camTween = gsap.to(from, {
+    px: pos.x, py: pos.y, pz: pos.z, tx: target.x, ty: target.y, tz: target.z, duration: D(dur), ease: 'power3.inOut',
+    onUpdate: () => { camera.position.set(from.px, from.py, from.pz); controls.target.set(from.tx, from.ty, from.tz); },
+  });
+}
+function homeView(dur = 1.1) {
+  // Fit the whole suite (about 17 m wide) to the current viewport aspect.
+  const dir = HOME.pos.clone().sub(HOME.target);
+  const base = dir.length();
+  const hfov = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect);
+  const fit = 8.4 / Math.tan(hfov / 2);
+  const dist = Math.min(36, Math.max(base, fit * 0.9));
+  flyTo(HOME.target.clone().add(dir.normalize().multiplyScalar(dist)), HOME.target, dur);
+}
+function focusOn(id) {
+  const o = objs[id];
+  if (!o) return;
+  const box = new THREE.Box3().setFromObject(o.group);
+  const c = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  const dist = Math.max(2.6, Math.max(size.x, size.y, size.z) * 2.3);
+  const dir = camera.position.clone().sub(controls.target).normalize();
+  dir.y = Math.max(dir.y, 0.45); dir.normalize();
+  flyTo(c.clone().add(dir.multiplyScalar(dist)), c, 0.9);
+}
+
+/* =====================================================================
+ * STATE → SCENE SYNC
+ * =================================================================== */
+let scanning = false;
+function itemPos(id, zone) { const [x, z] = SLOTS[id][zone]; return new THREE.Vector3(x, 0, z); }
+
+function syncSceneToAttempt() {
+  const a = session.current;
+  gsap.killTweensOf(cradle.position);
+  cradle.position.z = 0;
+  scanning = false;
+  scannerParts.boreLight.intensity = 0.6;
+  for (const id of Object.keys(E.ITEMS)) {
+    const o = objs[id];
+    const st = a.items[id];
+    o.group.visible = !!st;
+    o.tag.visible = !!st && ui.labels;
+    if (st) { gsap.killTweensOf(o.group.position); o.group.position.copy(itemPos(id, st.zone)); o.group.rotation.y = st.zone === 'ZONE_II' ? -Math.PI / 2 : 0; }
+  }
+  const has = new Set(a.patient.personal.map(p => p.id));
+  for (const id of Object.keys(personalMeshes)) {
+    const m = personalMeshes[id];
+    gsap.killTweensOf(m.scale); gsap.killTweensOf(m.position);
+    m.visible = has.has(id);
+    m.scale.setScalar(1);
+  }
+  personalMeshes.phone.position.y = TABLE.topY + 0.06 + 0.305;
+  personalMeshes.hairclip.position.y = TABLE.topY + 0.06 + 0.22;
+  updateItemTags();
+}
+
+function animateMove(id, zone) {
+  const g = objs[id].group;
+  const to = itemPos(id, zone);
+  const from = g.position.clone();
+  let path;
+  if (zone === 'ZONE_II') {
+    path = [];
+    if (from.x < 0.8) path.push(new THREE.Vector3(from.x, 0, 3.05), ROOM_LANE);
+    path.push(DOOR_IN, DOOR_OUT, STAGING_LANE, to);
+  } else {
+    path = [STAGING_LANE, DOOR_OUT, DOOR_IN];
+    if (to.x < 0.8) path.push(ROOM_LANE, new THREE.Vector3(to.x, 0, 3.05));
+    path.push(to);
+  }
+  gsap.killTweensOf(g.position);
+  const tl = gsap.timeline();
+  let prev = from;
+  path.forEach((p, i) => {
+    const leg = prev.distanceTo(p); prev = p;
+    tl.to(g.position, { x: p.x, z: p.z, duration: D(0.15 + leg * 0.22), ease: i === 0 ? 'power1.in' : i === path.length - 1 ? 'power2.out' : 'none' });
+  });
+  tl.to(g.rotation, { y: zone === 'ZONE_II' ? -Math.PI / 2 : 0, duration: D(0.5) }, 0.3);
+  // tilt lift so it reads as being wheeled
+
+}
+
+function animateRemovePersonal(id) {
+  const m = personalMeshes[id];
+  if (!m) return;
+  gsap.to(m.position, { y: m.position.y + 0.35, duration: D(0.6), ease: 'power2.out' });
+  gsap.to(m.scale, { x: 0.01, y: 0.01, z: 0.01, duration: D(0.6), ease: 'power2.in', onComplete: () => { m.visible = false; } });
+}
+
+function animateScan(onDone) {
+  scanning = true;
+  const tl = gsap.timeline({ onComplete: onDone });
+  tl.to(cradle.position, { z: -1.38, duration: D(3.0), ease: 'power2.inOut' });
+  tl.to(scannerParts.boreLight, { intensity: 2.2, duration: D(0.8), yoyo: true, repeat: 3, ease: 'sine.inOut' }, D(1.0));
+  tl.to({}, { duration: D(0.4) });
+  return tl;
+}
+
+function updateItemTags() {
+  const a = session.current;
+  for (const id of Object.keys(E.ITEMS)) {
+    const st = a.items[id];
+    if (!st) continue;
+    const cls = st.classifiedAs;
+    objs[id].el.innerHTML = `<span>${esc(E.ITEMS[id].name)}</span>${cls ? `<span class="cl ${cls}">${esc(E.LABELS[cls].text)}</span>` : ''}`;
+  }
+}
+
+/* =====================================================================
+ * EVENT DISPATCH  (every input source goes through here)
+ * =================================================================== */
+const inspectedOnce = new Set();
+
+function dispatch(evt) {
+  const attempt = session.current;
+  const o = session.handle(evt);
+  const shown = renderOutcome(o, attempt);
+  if (shown) attempt.markFeedbackShown(o.n);
+  refreshUI();
+  return o;
+}
+
+function renderOutcome(o, attempt) {
+  addLogRow(o, attempt);
+  // Feedback first: safety warnings render immediately, never behind an animation.
+  let shown = true;
+  if (o.violations.length) { lastAiContext = aiContextFor(o, attempt); showViolation(o); post('violation', { context: lastAiContext }); }
+  else if (o.checkpointCompleted) showSuccess(o);
+  else if (o.error === 'INVALID_EVENT') toast(`Ignored invalid event: ${o.notes[0]}`, 'warn');
+  else if (o.error) toast(o.notes[0] || o.error, 'warn');
+  else if (!o.accepted && o.notes.length) toast(o.notes[0]);
+  else if (o.accepted && ['MOVE', 'REMOVE_PERSONAL_ITEM', 'CONFIRM_CONDITIONS', 'IMPLANT_DECISION', 'CLASSIFY', 'CONFIRM_ID'].includes(o.event) && o.notes.length) toast(o.notes[0]);
+  else shown = false;
+
+  for (const v of o.violations) {
+    const s = v.subject || '';
+    const m = s.match(/^(?:zone4|class|move|cond|items):([a-z0-9]+)/);
+    if (m) flash(m[1]);
+    else if (s === 'patient' || s === 'implant' || s === 'personal') flash('patient');
+    if (o.src === 'hw' || o.src === 'kbd' || o.src === 'ui') pulsePad(o.pad || padFor(o.event), 'bad');
+  }
+  for (const fx of o.effects) {
+    if (fx.type === 'move') animateMove(fx.id, fx.zone);
+    if (fx.type === 'personal') animateRemovePersonal(fx.id);
+    if (fx.type === 'checkpoint') pulsePad(E.CHECKPOINTS[fx.id].pad, 'ok');
+    if (fx.type === 'reset') { deselect(); syncSceneToAttempt(); inspectedOnce.clear(); homeView(); showIdle('Scenario reset. A new attempt has started.'); }
+    if (fx.type === 'scan') {
+      deselect();
+      flyTo(new THREE.Vector3(3.2, 2.6, 3.4), new THREE.Vector3(0, 1.0, -0.4), 1.2);
+      animateScan(() => { if (o.recommendation) showCompletion(attempt, o.recommendation); });
+    }
+  }
+  if (o.recommendation && !o.effects.some(f => f.type === 'scan')) showCompletion(attempt, o.recommendation);
+  return shown;
+}
+
+function padFor(event) { const p = E.PADS.find(x => x.event === event); return p ? p.id : null; }
+
+/* =====================================================================
+ * UI
+ * =================================================================== */
+const scenarioSelect = $('#scenario-select');
+for (const [id, sc] of Object.entries(E.SCENARIOS)) {
+  const opt = document.createElement('option');
+  opt.value = id; opt.textContent = `L${sc.level} · ${sc.title}`;
+  scenarioSelect.appendChild(opt);
+}
+scenarioSelect.addEventListener('change', () => startScenario(scenarioSelect.value));
+
+function startScenario(id) {
+  session.start(id, 'switched');
+  closeModal();
+  deselect();
+  inspectedOnce.clear();
+  syncSceneToAttempt();
+  homeView();
+  showIdle(`${E.SCENARIOS[id].title} started. ${E.SCENARIOS[id].summary}`);
+  refreshUI(true);
+}
+
+/* ---------- pads ---------- */
+const padHost = $('#pads');
+for (const p of E.PADS) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'pad' + (p.event === 'RESET_SCENARIO' ? ' reset' : '');
+  b.dataset.pad = p.id;
+  b.innerHTML = `<span class="pid">${p.id} · <span class="kbd" style="border-color:rgba(241,182,137,.4);color:inherit">${p.id.slice(1)}</span></span><span class="pname">${esc(p.short)}</span><span class="pev">${p.event}</span><span class="glow"></span>`;
+  b.title = `${p.id} (GPIO${p.gpio}) → ${p.event}`;
+  b.addEventListener('click', () => padPress(p.id, 'ui'));
+  padHost.appendChild(b);
+}
+function padPress(padId, src, seq) {
+  const p = E.PADS.find(x => x.id === padId);
+  if (!p) return;
+  pulsePad(padId, 'touch');
+  dispatch({ event: p.event, src, pad: padId, seq });
+}
+function pulsePad(padId, kind) {
+  const el = padHost.querySelector(`[data-pad="${padId}"] .glow`);
+  if (!el) return;
+  const color = kind === 'bad' ? '#ff5f6f' : kind === 'ok' ? '#3fd99a' : '#45d6ec';
+  gsap.killTweensOf(el);
+  gsap.fromTo(el, { opacity: 1, boxShadow: `0 0 0 2px ${color}, 0 0 26px ${color}88 inset` }, { opacity: 0, duration: D(kind === 'touch' ? 0.7 : 1.4), ease: 'power2.out' });
+}
+
+/* ---------- procedure rail ---------- */
+const CHECK_SVG = '<svg viewBox="0 0 12 12"><path d="M2.5 6.3 5 8.6 9.6 3.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+let lastDone = new Set();
+function renderRail(fresh) {
+  const a = session.current;
+  const sc = a.scenario;
+  $('#sc-title').textContent = sc.title;
+  $('#sc-summary').textContent = sc.summary;
+  $('#sc-kind').textContent = sc.kind === 'drill' ? 'Focused drill' : 'Core scenario';
+  $('#sc-level').innerHTML = [1, 2, 3].map(i => `<i class="${i <= sc.level ? 'on' : ''}"></i>`).join('');
+  $('#sc-session').textContent = session.id;
+  $('#attempt-label').textContent = `Attempt ${a.attemptNo}`;
+  scenarioSelect.value = a.scenarioId;
+  const done = a.order.filter(id => a.checkpoints[id].status === 'done').length;
+  $('#sc-progress-text').textContent = `${done} of ${a.order.length} checkpoints`;
+  gsap.to('#sc-progress', { width: `${(done / a.order.length) * 100}%`, duration: D(0.6), ease: 'power2.out' });
+
+  const hint = a.nextHint();
+  const ol = $('#cps');
+  ol.innerHTML = '';
+  for (const id of a.order) {
+    const def = E.CHECKPOINTS[id];
+    const cp = a.checkpoints[id];
+    const prereqOpen = def.prereqs.some(p => a.checkpoints[p] && a.checkpoints[p].status !== 'done');
+    const state = cp.status === 'done' ? 'done' : (hint && hint.checkpoint === id) ? 'active' : prereqOpen ? 'blocked' : 'open';
+    const li = document.createElement('li');
+    li.className = 'cp'; li.dataset.state = state; li.dataset.cp = id;
+    let reqs = '';
+    if (sc.hints && cp.status !== 'done') {
+      reqs = '<ul class="req">' + a.requirementStatus(id).filter(r => r.name !== 'implantResolved' || a.patient.implant).map(r => `<li class="${r.ok ? 'ok' : ''}">${esc(r.label)}</li>`).join('') + '</ul>';
+    }
+    li.innerHTML = `<span class="key">${def.pad}</span><div><b>${esc(def.title)}</b><small>${esc(def.detail)}</small>${reqs}</div><span class="state">${cp.status === 'done' ? CHECK_SVG : ''}</span>${cp.incorrect ? `<span class="flag">${cp.incorrect}×</span>` : ''}`;
+    ol.appendChild(li);
+    if (cp.status === 'done' && !lastDone.has(session.attempts.length + id) && !fresh) {
+      gsap.fromTo(li, { backgroundColor: 'rgba(63,217,154,.28)' }, { backgroundColor: 'rgba(63,217,154,0)', duration: D(1.4), ease: 'power2.out', clearProps: 'backgroundColor' });
+      gsap.fromTo(li.querySelector('.state'), { scale: 0.4 }, { scale: 1, duration: D(0.5), ease: 'back.out(3)' });
+    }
+    if (cp.status === 'done') lastDone.add(session.attempts.length + id);
+  }
+  // Guided hint
+  const hb = $('#hint-bar');
+  padHost.querySelectorAll('.pad').forEach(p => p.classList.remove('hinted'));
+  ui.hintFocus = null;
+  if (sc.hints && hint && a.status === 'active') {
+    $('#hint-text').textContent = hint.text;
+    if (hb.hidden) { hb.hidden = false; gsap.fromTo(hb, { y: -8, opacity: 0 }, { y: 0, opacity: 1, duration: D(0.4) }); }
+    if (hint.focus.startsWith('pad:')) padHost.querySelector(`[data-pad="${hint.focus.slice(4)}"]`)?.classList.add('hinted');
+    else ui.hintFocus = hint.focus === 'record' ? 'console' : hint.focus;
+  } else hb.hidden = true;
+}
+
+/* ---------- score & header ---------- */
+const scoreObj = { v: 100 };
+function renderScore() {
+  const a = session.current;
+  const target = a.score();
+  gsap.to(scoreObj, { v: target, duration: D(0.6), ease: 'power2.out', onUpdate: () => { $('#score-val').textContent = Math.round(scoreObj.v); } });
+  if (RM) $('#score-val').textContent = target;
+  const chip = $('#score-chip');
+  chip.dataset.tone = target >= E.SCORING.passMinScore && a.criticalCount() === 0 ? 'ok' : a.criticalCount() ? 'bad' : 'warn';
+  chip.style.borderColor = chip.dataset.tone === 'ok' ? 'rgba(63,217,154,.45)' : chip.dataset.tone === 'bad' ? 'rgba(255,95,111,.55)' : 'rgba(244,181,73,.5)';
+  const vio = a.violations().length;
+  $('#viol-count').textContent = `${vio} violation${vio === 1 ? '' : 's'}`;
+}
+setInterval(() => {
+  const a = session.current;
+  $('#timer-chip').textContent = fmtT((a.endedAt || Date.now()) - a.startedAt);
+}, 500);
+
+/* ---------- assessor feedback ---------- */
+const fbHost = $('#feedback');
+/* The assessor card can be hidden, and any card can be saved to a feedback log.
+ * The log is kept in this browser (localStorage) and listed in the trainer report. */
+const FB_KEY = 'mrisafe-feedback-log';
+let fbLog = [];
+try { const v = JSON.parse(localStorage.getItem(FB_KEY) || '[]'); if (Array.isArray(v)) fbLog = v.slice(-200); } catch (e) { fbLog = []; }
+function persistFeedbackLog() { try { localStorage.setItem(FB_KEY, JSON.stringify(fbLog.slice(-200))); } catch (e) { /* storage blocked: the log lasts for this page only */ } }
+let fbCurrent = null; // the violation card on screen, if any
+function setFeedbackOpen(open) {
+  $('#fb-body').hidden = !open;
+  const b = $('#fb-toggle');
+  b.textContent = open ? 'Hide' : 'Show';
+  b.setAttribute('aria-expanded', String(open));
+}
+function setFbActions(show) { $('#fb-actions').hidden = !show; $('#fb-log').disabled = false; $('#fb-log-note').textContent = ''; }
+$('#fb-toggle').addEventListener('click', () => setFeedbackOpen($('#fb-body').hidden));
+$('#fb-log').addEventListener('click', () => {
+  if (!fbCurrent) return;
+  fbLog.push({ ...fbCurrent, savedAt: new Date().toISOString() });
+  persistFeedbackLog();
+  $('#fb-log').disabled = true;
+  $('#fb-log-note').textContent = `Saved. ${fbLog.length} in the feedback log (Trainer view).`;
+  renderTrainer();
+});
+function showIdle(msg) {
+  fbCurrent = null; setFbActions(false);
+  fbHost.innerHTML = `<div class="fb info idle"><div class="fb-h"><span class="sev">Ready</span></div><p>${esc(msg)}</p></div>`;
+}
+function showViolation(o) {
+  const att = session.current;
+  fbCurrent = {
+    at: new Date().toISOString(), attempt: att.attemptNo, scenario: att.scenario.title, eventNo: o.n,
+    violations: o.violations.map(v => ({ rule: v.rule, severity: v.severity, title: v.title, evidence: v.evidence, why: v.why, corrective: v.corrective })),
+  };
+  setFbActions(true);
+  setFeedbackOpen(true); // a new violation always opens the card; the reader can hide it again
+  let cards = o.violations.map(v => `
+    <div class="fb ${v.severity}">
+      <div class="fb-h"><span class="sev">${esc(E.SEVERITY[v.severity].label)}</span><span class="eyebrow">${esc(v.rule)}</span><span class="pts">${v.points ? '−' + v.points : 'repeat · 0'}</span></div>
+      <h3>${esc(v.title)}</h3>
+      <dl>
+        <div><dt>What happened</dt><dd>${esc(v.evidence)}</dd></div>
+        <div><dt>Why it matters</dt><dd>${esc(v.why)}</dd></div>
+        <div><dt>Do this instead</dt><dd>${esc(v.corrective)}</dd></div>
+      </dl>
+      <div class="basis">Modelled on: ${esc(v.basis)} · rule status: ${esc(v.status)}</div>
+    </div>`).join('');
+  if (EMBED) cards = '<button class="btn small ai-ask" type="button" id="ai-explain" style="margin:0 0 2px">✦ Explain this with the coach</button>' + cards;
+  fbHost.innerHTML = cards;
+  $('#ai-explain')?.addEventListener('click', () => post('ask-ai', { task: 'explain', context: lastAiContext }));
+  // Visible immediately; the shake is decoration on an already-readable card.
+  const first = fbHost.firstElementChild;
+  if (first && !RM) gsap.fromTo(first, { x: -6 }, { x: 0, duration: 0.5, ease: 'elastic.out(1, 0.3)' });
+}
+function showSuccess(o) {
+  fbCurrent = null; setFbActions(false);
+  const def = E.CHECKPOINTS[o.checkpointCompleted];
+  fbHost.innerHTML = `<div class="fb ok"><div class="fb-h"><span class="sev">Checkpoint complete</span><span class="eyebrow">${def.pad}</span></div><h3>${esc(def.title)}</h3><dl><div><dt>Evidence</dt><dd>${esc(evidenceFor(o.checkpointCompleted))}</dd></div></dl></div>`;
+  gsap.fromTo(fbHost.firstElementChild, { y: 6, opacity: 0.4 }, { y: 0, opacity: 1, duration: D(0.35), ease: 'power2.out' });
+}
+function evidenceFor(cpId) {
+  const att = session.attempts[session.attempts.length - 1];
+  const req = E.CHECKPOINTS[cpId].requires.map(n => E.REQ_LABELS[n]);
+  if (!req.length) return 'All earlier checkpoints were complete when the scan was started.';
+  return req.filter(r => r !== E.REQ_LABELS.implantResolved || att.patient.implant).join(' · ') + '.';
+}
+
+/* ---------- event log ---------- */
+const logHost = $('#log');
+function addLogRow(o, attempt) {
+  const li = document.createElement('li');
+  let st;
+  if (o.error === 'INVALID_EVENT') st = '<span class="st inv">invalid</span>';
+  else if (o.violations.length) st = `<span class="st vio">${o.violations.map(v => v.rule).join(' ')}</span>`;
+  else if (o.checkpointCompleted) st = '<span class="st cpd">✓ checkpoint</span>';
+  else if (o.accepted) st = '<span class="st acc">accepted</span>';
+  else st = '<span class="st blk">no change</span>';
+  const what = [o.event, o.target, o.value].filter(Boolean).join(' ');
+  li.innerHTML = `<span>#${o.n}</span><span>${fmtT(o.at)}</span><span class="src">${esc(o.src)}</span><span class="ev" title="${esc(what)}">${esc(what)}</span>${st}`;
+  logHost.prepend(li);
+  while (logHost.children.length > 200) logHost.lastChild.remove();
+  gsap.fromTo(li, { backgroundColor: 'rgba(69,214,236,.18)' }, { backgroundColor: 'rgba(69,214,236,0)', duration: D(1.2), clearProps: 'backgroundColor' });
+  const total = session.attempts.reduce((s, a) => s + a.log.length, 0);
+  $('#log-count').textContent = `${total} event${total === 1 ? '' : 's'}`;
+}
+
+/* ---------- inspector ---------- */
+const insp = $('#inspector');
+function select(id) {
+  ui.selected = id;
+  $('#btn-deselect').hidden = false;
+  focusOn(id === 'console' ? 'console' : id);
+  const o = objs[id];
+  if (session.current.status !== 'active') { renderInspector(true); return; }
+  if (o.kind === 'item') dispatchQuiet({ event: 'INSPECT', target: id, src: 'scene' });
+  else if (o.kind === 'patient') dispatchQuiet({ event: 'INSPECT', target: 'patient', src: 'scene' });
+  else if (o.kind === 'record') dispatchQuiet({ event: 'INSPECT', target: 'record', src: 'scene' });
+  else if (!inspectedOnce.has(id)) { inspectedOnce.add(id); dispatchQuiet({ event: 'INSPECT', target: id, src: 'scene' }); }
+  renderInspector(true);
+}
+/* Inspection of objects is recorded in the log but does not replace the feedback card. */
+function dispatchQuiet(evt) {
+  const attempt = session.current;
+  const o = session.handle(evt);
+  addLogRow(o, attempt);
+  refreshUI();
+  return o;
+}
+function deselect() {
+  ui.selected = null;
+  $('#btn-deselect').hidden = true;
+  renderInspector(true);
+}
+$('#btn-deselect').addEventListener('click', () => { deselect(); homeView(); });
+$('#btn-record').addEventListener('click', () => select('console'));
+
+function act(evt) { dispatch({ ...evt, src: 'scene' }); }
+
+function renderInspector(animateIn) {
+  const id = ui.selected;
+  const a = session.current;
+  let html = '';
+  if (!id) {
+    html = `<div class="empty-insp">
+      <p>Select anything in the suite to inspect it. Everything you open, classify or move is recorded as evidence.</p>
+      <ul>
+        <li><b>Console</b> opens the patient record and screening form.</li>
+        <li><b>Patient</b> on the table for the final door check.</li>
+        <li><b>Equipment</b> to read its MR labelling, classify it, and move it.</li>
+      </ul>
+      <p>Pads <span class="kbd">T1</span>–<span class="kbd">T5</span> attest each checkpoint. A touch is only a claim; the assessor checks it against what you actually did.</p>
+    </div>`;
+  } else if (objs[id].kind === 'record') html = recordHTML(a);
+  else if (objs[id].kind === 'patient') html = patientHTML(a);
+  else if (objs[id].kind === 'item') html = itemHTML(a, id);
+  else html = infoHTML(id);
+  insp.innerHTML = html;
+  bindInspector();
+  if (animateIn) gsap.fromTo(insp.children, { y: 8, opacity: 0 }, { y: 0, opacity: 1, duration: D(0.35), stagger: D(0.04), ease: 'power2.out', clearProps: 'transform' });
+}
+
+function recordHTML(a) {
+  const p = a.patient;
+  const implantRow = p.implant
+    ? `<tr class="flag"><td>Implant or device</td><td>Yes · ${esc(p.implant.type)}</td></tr>`
+    : `<tr><td>Implant or device</td><td>None reported</td></tr>`;
+  let implantBlock = '';
+  if (p.implant) {
+    implantBlock = p.implantResolved
+      ? `<div class="done-line">${CHECK_SVG.replace('<svg', '<svg width="14" height="14"')} Referred to MR safety officer / radiologist. Simulated review outcome: scan may proceed under the labelled conditions.</div>`
+      : `<div><div class="section-label">Implant decision</div><p style="margin:0 0 8px;font-size:12.8px">${esc(p.implant.card)}</p>
+        <div class="choice">
+          <button type="button" data-act="implant" data-v="ESCALATE">Refer to the MR safety officer / supervising radiologist for review against the device's MR Conditional labelling</button>
+          <button type="button" data-act="implant" data-v="PROCEED_ON_CARD">Proceed: the card says MR Conditional</button>
+          <button type="button" data-act="implant" data-v="IGNORE">Disregard: the patient had an MRI before without problems</button>
+        </div></div>`;
+  }
+  return `
+    <div class="insp-title"><div><div class="eyebrow">Console · patient record</div><h2>${esc(p.name)}</h2><p>${esc(p.exam)} · fictional training case</p></div></div>
+    <div>
+      <div class="section-label">Identity check</div>
+      <div class="idcmp">
+        <div><b>Scan request</b>${esc(p.name)}<br>MRN ${esc(p.mrn)}<br>DOB ${esc(p.dob)}</div>
+        <div><b>Wristband</b>${esc(p.name)}<br>MRN ${esc(p.mrn)}<br>DOB ${esc(p.dob)}</div>
+      </div>
+      <div style="margin-top:8px">${p.idConfirmed
+        ? `<div class="done-line">${CHECK_SVG.replace('<svg', '<svg width="14" height="14"')} Two identifiers confirmed</div>`
+        : `<button class="btn small" type="button" data-act="confirm-id">Confirm two identifiers match</button>`}</div>
+    </div>
+    <div>
+      <div class="section-label">MR screening form</div>
+      <table class="form-tbl"><tbody>
+        <tr><td>Previous surgery</td><td>${p.implant ? 'Yes' : 'No'}</td></tr>
+        ${implantRow}
+        <tr><td>Metal fragments or injury</td><td>No</td></tr>
+        <tr><td>Tattoos / medication patches</td><td>No</td></tr>
+        <tr><td>Form signed by patient</td><td>Yes</td></tr>
+      </tbody></table>
+    </div>
+    ${implantBlock}`;
+}
+
+function patientHTML(a) {
+  const p = a.patient;
+  const items = p.personal.length
+    ? p.personal.map(x => `<tr class="${x.removed ? '' : 'flag'}"><td>${esc(E.PERSONAL_ITEMS[x.id].name)}</td><td>${x.removed ? 'In locker' : `<button class="btn small" type="button" data-act="remove" data-id="${x.id}">Remove to locker</button>`}</td></tr>`).join('')
+    : '<tr><td>Personal items</td><td>None found</td></tr>';
+  return `
+    <div class="insp-title"><div><div class="eyebrow">Final check at the Zone IV door</div><h2>${esc(p.name)}</h2><p>Supine, head first · wristband present</p></div></div>
+    <div class="done-line">${CHECK_SVG.replace('<svg', '<svg width="14" height="14"')} Patient checked (recorded as evidence)</div>
+    <div><div class="section-label">Visual and verbal check</div>
+      <table class="form-tbl"><tbody>
+        <tr><td>Changed into hospital gown</td><td>Yes</td></tr>
+        ${items}
+      </tbody></table>
+    </div>`;
+}
+
+function itemHTML(a, id) {
+  const info = E.ITEMS[id];
+  const st = a.items[id];
+  const lab = info.labelShown
+    ? `<div class="labelbox">${mrSymbolSVG(info.labelShown, 34)}<div><b>${esc(E.LABELS[info.labelShown].text)}</b><br><span style="color:var(--muted)">Label on the item</span></div></div>`
+    : `<div class="labelbox none">${mrSymbolSVG(null, 34)}<div><b>No MR labelling found</b><br><span style="color:var(--muted)">Status unknown</span></div></div>`;
+  const seg = Object.keys(E.LABELS).map(l => `<button type="button" data-act="classify" data-v="${l}" aria-pressed="${st.classifiedAs === l}">${mrSymbolSVG(l, 22)}${esc(E.LABELS[l].text)}</button>`).join('');
+  const cond = st.classifiedAs === 'MR_CONDITIONAL'
+    ? (st.conditionsConfirmed
+      ? `<div class="done-line">${CHECK_SVG.replace('<svg', '<svg width="14" height="14"')} Conditions confirmed against labelling</div>`
+      : `<button class="btn small" type="button" data-act="conditions">Confirm conditions against labelling</button>`)
+    : '';
+  const move = st.zone === 'ZONE_IV'
+    ? `<button class="btn small" type="button" data-act="move" data-v="ZONE_II">Move out to Zone II staging</button>`
+    : `<button class="btn small" type="button" data-act="move" data-v="ZONE_IV">Move into Zone IV</button>`;
+  return `
+    <div class="insp-title"><div><div class="eyebrow">Equipment · ${esc(E.ZONES[st.zone].text)}</div><h2>${esc(info.name)}</h2><p>${esc(info.material)}</p></div></div>
+    ${lab}
+    <p style="margin:0;font-size:12.8px;color:var(--muted)">${esc(info.note)}</p>
+    <div><div class="section-label">Classify by labelling</div><div class="seg">${seg}</div>
+      <p class="note" style="margin:6px 0 0">Items with no MR labelling have unknown status and are handled as MR Unsafe.</p></div>
+    ${cond ? `<div>${cond}</div>` : ''}
+    <div><div class="section-label">Location</div><div class="actions">${move}</div></div>`;
+}
+
+function infoHTML(id) {
+  const texts = {
+    gantry: ['MR scanner', 'Schematic superconducting MR system', 'The static magnetic field is always on, even when no scan is running. That is why the projectile risk exists at all times in Zone IV. This model is schematic: it does not simulate magnetic, RF or gradient fields, or image formation.'],
+    locker: ['Patient lockers', 'Zone III', 'Personal items removed during the door check are stored here.'],
+  };
+  const [title, sub, body] = texts[id] || [objs[id].title, '', ''];
+  const more = id === 'gantry' ? '<a class="btn small" href="./internals.html#ch3" style="text-decoration:none;align-self:flex-start">Look inside the magnet →</a>' : '';
+  return `<div class="insp-title"><div><div class="eyebrow">${esc(sub)}</div><h2>${esc(title)}</h2></div></div><p style="margin:0;font-size:13px">${esc(body)}</p>${more}`;
+}
+
+function bindInspector() {
+  insp.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => {
+    const id = ui.selected;
+    const actName = b.dataset.act;
+    if (actName === 'confirm-id') act({ event: 'CONFIRM_ID' });
+    if (actName === 'implant') act({ event: 'IMPLANT_DECISION', value: b.dataset.v });
+    if (actName === 'remove') act({ event: 'REMOVE_PERSONAL_ITEM', target: b.dataset.id });
+    if (actName === 'classify') act({ event: 'CLASSIFY', target: id, value: b.dataset.v });
+    if (actName === 'conditions') act({ event: 'CONFIRM_CONDITIONS', target: id });
+    if (actName === 'move') act({ event: 'MOVE', target: id, value: b.dataset.v });
+  }));
+}
+
+/* ---------- toasts ---------- */
+function toast(msg, tone = '') {
+  const host = $('#toasts');
+  const el = document.createElement('div');
+  el.className = 'toast ' + tone;
+  el.textContent = msg;
+  host.appendChild(el);
+  gsap.fromTo(el, { y: 12, opacity: 0 }, { y: 0, opacity: 1, duration: D(0.3) });
+  setTimeout(() => gsap.to(el, { opacity: 0, y: 8, duration: D(0.3), onComplete: () => el.remove() }), tone ? 5200 : 3200);
+  while (host.children.length > 4) host.firstChild.remove();
+}
+
+/* ---------- completion ---------- */
+function showCompletion(attempt, rec) {
+  const s = attempt.summary();
+  const card = $('#complete-card');
+  const recSc = E.SCENARIOS[rec.scenarioId];
+  card.innerHTML = `
+    <div class="eyebrow">${esc(s.scenarioTitle)} · attempt ${s.attemptNo}</div>
+    <h2 id="complete-title">Pre-scan preparation complete</h2>
+    <div class="result-ring"><div class="big">${s.score}</div><div><span class="verdict ${s.passed ? 'pass' : 'fail'}">${s.passed ? 'PASS' : 'NOT PASSED'}</span>
+      <div class="note" style="margin-top:6px">Pass needs ≥ ${E.SCORING.passMinScore} and no critical violations · ${s.criticalCount} critical · ${s.violationsUnique} unique violation${s.violationsUnique === 1 ? '' : 's'} · ${fmtT(s.durationMs)}</div></div></div>
+    <div class="rec"><span class="eyebrow">Next scenario · rule ${esc(rec.rule)}</span><b>L${recSc.level} · ${esc(recSc.title)}</b>${esc(rec.reason)}</div>
+    <div class="actions">
+      <button class="btn primary" type="button" id="go-next">${rec.scenarioId === attempt.scenarioId ? 'Try again' : 'Start ' + esc(recSc.title)}</button>
+      ${rec.scenarioId === attempt.scenarioId ? '' : '<button class="btn" type="button" id="go-repeat">Repeat this scenario</button>'}
+      <button class="btn ghost" type="button" id="go-report">Trainer view</button>
+      ${EMBED ? '<button class="btn ghost" type="button" id="go-ai">Debrief with the coach</button>' : ''}
+    </div>`;
+  const m = $('#complete');
+  m.hidden = false;
+  gsap.fromTo(card, { y: 24, opacity: 0, scale: 0.98 }, { y: 0, opacity: 1, scale: 1, duration: D(0.5), ease: 'power3.out' });
+  $('#go-next').addEventListener('click', () => startScenario(rec.scenarioId));
+  $('#go-repeat')?.addEventListener('click', () => startScenario(attempt.scenarioId));
+  $('#go-report').addEventListener('click', () => { closeModal(); openTrainer(); });
+  $('#go-ai')?.addEventListener('click', () => post('ask-ai', { task: 'debrief', context: debriefContext(attempt, rec) }));
+  post('complete', { context: debriefContext(attempt, rec) });
+  $('#go-next').focus();
+}
+function closeModal() { $('#complete').hidden = true; }
+
+/* =====================================================================
+ * TRAINER DASHBOARD
+ * =================================================================== */
+function openTrainer() {
+  ui.trainerOpen = true;
+  const t = $('#trainer');
+  t.hidden = false;
+  renderTrainer();
+  gsap.fromTo('.sheet-inner', { y: 40, opacity: 0 }, { y: 0, opacity: 1, duration: D(0.45), ease: 'power3.out' });
+  $('#trainer-close').focus();
+}
+function closeTrainer() { ui.trainerOpen = false; $('#trainer').hidden = true; }
+$('#btn-trainer').addEventListener('click', openTrainer);
+$('#trainer-close').addEventListener('click', closeTrainer);
+$('#trainee-name').addEventListener('input', e => { session.trainee = e.target.value || 'Trainee'; });
+
+function renderTrainer() {
+  if (!ui.trainerOpen) return;
+  const a = session.current;
+  const s = a.summary();
+  const viol = a.violations();
+  const yes = b => b ? '<span class="st acc">yes</span>' : '<span class="st blk">no</span>';
+  const statusChip = st => ({ done: '<span class="st cpd">done</span>', open: '<span class="st blk">open</span>' }[st] || st);
+  const results = session.attempts.map((x, i) => ({ i: i + 1, x, s: x.summary() }));
+  $('#trainer-body').innerHTML = `
+    <div class="note">Session <span class="mono">${esc(session.id)}</span> · started ${esc(new Date(session.startedAt).toLocaleString())} · Data recorded live in this browser. Nothing here is demonstration data. Educational prototype: rules are illustrative and do not replace local MR safety procedures or certification.</div>
+    <div class="tiles">
+      <div class="tile"><div class="eyebrow">Scenario</div><div class="v" style="font-size:16px;font-family:var(--f-display)">${esc(s.scenarioTitle)}</div><div class="s">Attempt ${s.attemptNo} · ${esc(s.status)}</div></div>
+      <div class="tile"><div class="eyebrow">Score</div><div class="v">${s.score}</div><div class="s">${s.completed ? (s.passed ? 'Passed' : 'Not passed') : 'In progress'} · pass ≥ ${E.SCORING.passMinScore}, 0 critical</div></div>
+      <div class="tile"><div class="eyebrow">Checkpoints</div><div class="v">${Object.values(s.checkpoints).filter(c => c.status === 'done').length}/${a.order.length}</div><div class="s">completed</div></div>
+      <div class="tile"><div class="eyebrow">Actions</div><div class="v">${s.correctActions}<span style="color:var(--muted)"> / </span><span style="color:var(--bad)">${s.incorrectActions}</span></div><div class="s">correct / with violation</div></div>
+      <div class="tile"><div class="eyebrow">Critical</div><div class="v" style="color:${s.criticalCount ? 'var(--bad)' : 'var(--ok)'}">${s.criticalCount}</div><div class="s">${s.violationsUnique} unique violation${s.violationsUnique === 1 ? '' : 's'}</div></div>
+      <div class="tile"><div class="eyebrow">Retries</div><div class="v">${session.retriesFor(a.scenarioId)}</div><div class="s">this scenario · ${session.totalRetries} in session</div></div>
+      <div class="tile"><div class="eyebrow">Duration</div><div class="v">${fmtT(s.durationMs)}</div><div class="s">this attempt</div></div>
+    </div>
+
+    <div class="two">
+      <div><div class="section-label">Checkpoints</div><div class="tbl-wrap"><table class="data"><thead><tr><th>Pad</th><th>Checkpoint</th><th>Status</th><th>Completed at</th><th>Incorrect</th><th>Repeats</th></tr></thead><tbody>
+        ${a.order.map(id => { const c = a.checkpoints[id]; const d = E.CHECKPOINTS[id]; return `<tr><td class="mono">${d.pad}</td><td>${esc(d.title)}</td><td>${statusChip(c.status)}</td><td class="mono">${c.completedAt !== null ? fmtT(c.completedAt) : '—'}</td><td class="mono">${c.incorrect}</td><td class="mono">${c.repeats}</td></tr>`; }).join('')}
+      </tbody></table></div></div>
+      <div><div class="section-label">Adaptive scenario selection</div>
+        ${session.recommendations.length ? `<div class="tbl-wrap"><table class="data"><thead><tr><th>After</th><th>Rule</th><th>Next</th><th>Reason</th></tr></thead><tbody>
+          ${session.recommendations.map(r => `<tr><td class="mono">#${r.afterAttempt}</td><td class="mono">${esc(r.rule)}</td><td>${esc(E.SCENARIOS[r.scenarioId].title)}</td><td>${esc(r.reason)}</td></tr>`).join('')}
+        </tbody></table></div>` : '<p class="note">No attempt has been completed yet in this session.</p>'}
+        <div class="section-label" style="margin-top:12px">Rules, applied in order</div>
+        <ol class="note" style="margin:0;padding-left:18px;display:grid;gap:3px">${E.ADAPT_RULES.map(r => `<li><span class="mono">${r.id}</span> ${esc(r.text)}</li>`).join('')}</ol>
+      </div>
+    </div>
+
+    <div><div class="section-label">Violations and explanations · current attempt</div>
+      ${viol.length ? `<div class="tbl-wrap"><table class="data"><thead><tr><th>Time</th><th>#</th><th>Rule</th><th>Severity</th><th>What happened</th><th>Corrective action</th><th>Points</th></tr></thead><tbody>
+        ${viol.map(v => `<tr><td class="mono">${fmtT(v.at)}</td><td class="mono">${v.n}</td><td class="mono">${esc(v.rule)}</td><td>${esc(E.SEVERITY[v.severity].label)}</td><td>${esc(v.evidence)}</td><td>${esc(v.corrective)}</td><td class="mono">${v.points ? '−' + v.points : '0 (repeat)'}</td></tr>`).join('')}
+      </tbody></table></div>` : '<p class="note">No violations recorded in this attempt.</p>'}
+    </div>
+
+    <div><div class="section-label">Feedback log · saved from the assessor (${fbLog.length})</div>
+      ${fbLog.length ? `<div class="tbl-wrap"><table class="data"><thead><tr><th>Saved</th><th>Attempt</th><th>Rule</th><th>Severity</th><th>What happened</th><th>Corrective action</th></tr></thead><tbody>
+        ${fbLog.slice().reverse().map(f => f.violations.map(v => `<tr><td class="mono">${esc(new Date(f.savedAt).toLocaleTimeString())}</td><td class="mono">${esc(f.attempt)}</td><td class="mono">${esc(v.rule)}</td><td>${esc((E.SEVERITY[v.severity] || { label: v.severity }).label)}</td><td>${esc(v.evidence)}</td><td>${esc(v.corrective)}</td></tr>`).join('')).join('')}
+      </tbody></table></div>` : '<p class="note">Nothing saved yet. Press Save to log on an assessor card to keep it here and in the downloads.</p>'}
+      <div class="actions" style="margin-top:8px"><button class="btn small" id="fb-download" type="button">Download feedback log</button><button class="btn small" id="fb-clear" type="button" ${fbLog.length ? '' : 'disabled'}>Clear feedback log</button></div>
+    </div>
+
+    <div><div class="section-label">Event timeline · current attempt (${a.log.length} events)</div>
+      <div class="tbl-wrap"><table class="data"><thead><tr><th>#</th><th>Time</th><th>Source</th><th>Dev seq</th><th>Event</th><th>Target / value</th><th>Received</th><th>Accepted</th><th>Checkpoint</th><th>Violation</th><th>Feedback shown</th></tr></thead><tbody>
+        ${a.log.map(o => `<tr><td class="mono">${o.n}</td><td class="mono">${fmtT(o.at)}</td><td class="mono">${esc(o.src)}</td><td class="mono">${o.devSeq ?? '—'}</td><td class="mono">${esc(o.event)}</td><td>${esc([o.target, o.value].filter(Boolean).join(' · ') || '—')}</td><td>${yes(o.received)}</td><td>${yes(o.accepted)}</td><td class="mono">${esc(o.checkpointCompleted || '—')}</td><td class="mono">${esc(o.violations.map(v => v.rule).join(' ') || (o.error || '—'))}</td><td>${yes(o.feedbackShown)}</td></tr>`).join('')}
+      </tbody></table></div>
+    </div>
+
+    <div class="two">
+      <div><div class="section-label">Attempts in this session</div><div class="tbl-wrap"><table class="data"><thead><tr><th>#</th><th>Scenario</th><th>Status</th><th>Score</th><th>Result</th><th>Critical</th><th>Time</th></tr></thead><tbody>
+        ${results.map(r => `<tr><td class="mono">${r.i}</td><td>${esc(r.s.scenarioTitle)}</td><td>${esc(r.s.status)}</td><td class="mono">${r.s.score}</td><td>${r.s.completed ? (r.s.passed ? '<span class="st acc">pass</span>' : '<span class="st vio">not passed</span>') : '—'}</td><td class="mono">${r.s.criticalCount}</td><td class="mono">${fmtT(r.s.durationMs)}</td></tr>`).join('')}
+      </tbody></table></div></div>
+      <div><div class="section-label">Scoring criteria</div>
+        <div class="tbl-wrap"><table class="data"><tbody>
+          <tr><td>Start</td><td class="mono">${E.SCORING.start}</td></tr>
+          ${Object.entries(E.SEVERITY).map(([k, v]) => `<tr><td>${esc(v.label)} violation</td><td class="mono">−${v.points}</td></tr>`).join('')}
+          <tr><td>Pass</td><td>Score ≥ ${E.SCORING.passMinScore}, no critical violations, all checkpoints done</td></tr>
+          <tr><td>Repeats</td><td>Each rule is penalised once per subject per attempt; repeats are logged at 0</td></tr>
+        </tbody></table></div>
+      </div>
+    </div>
+
+    <div><div class="section-label">Device diagnostics</div>${diagHTML()}</div>
+    <div id="copy-area" hidden><div class="section-label">Copy manually</div><textarea class="copybox" id="copy-box" readonly></textarea></div>`;
+  bindDiag();
+}
+
+function download(name, text, type) {
+  try {
+    const blob = new Blob([text], { type });
+    const url = URL.createObjectURL(blob);
+    const aEl = document.createElement('a');
+    aEl.href = url; aEl.download = name;
+    document.body.appendChild(aEl); aEl.click(); aEl.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    toast(`Saved ${name}. If nothing downloaded, use Copy instead.`);
+  } catch (e) { copyText(text); }
+}
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); toast('Copied to clipboard.'); }
+  catch (e) {
+    const area = $('#copy-area'); const box = $('#copy-box');
+    if (area && box) { area.hidden = false; box.value = text; box.focus(); box.select(); toast('Clipboard blocked here. The text is selected below; press Ctrl+C.', 'warn'); }
+  }
+}
+const stamp = () => new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+const reportWithLog = () => ({ ...session.report(), feedbackLog: fbLog });
+$('#exp-json').addEventListener('click', () => download(`mrisafe-${session.id}-${stamp()}.json`, JSON.stringify(reportWithLog(), null, 2), 'application/json'));
+/* feedback-log actions (the section is re-rendered, so use delegation) */
+$('#trainer-body').addEventListener('click', e => {
+  if (e.target.id === 'fb-clear' && fbLog.length) { fbLog = []; persistFeedbackLog(); renderTrainer(); }
+  if (e.target.id === 'fb-download') {
+    const lines = ['MRISafe Twin · feedback log', `Session ${session.id} · exported ${new Date().toLocaleString()}`, ''];
+    for (const f of fbLog) for (const v of f.violations) lines.push(`${f.savedAt} · attempt ${f.attempt} · ${f.scenario} · ${v.rule} (${v.severity}) · ${v.title}`, `  What happened: ${v.evidence}`, `  Corrective: ${v.corrective}`, '');
+    if (!fbLog.length) lines.push('(nothing saved)');
+    download(`mrisafe-feedback-${stamp()}.txt`, lines.join('\n'), 'text/plain');
+  }
+});
+$('#exp-csv').addEventListener('click', () => download(`mrisafe-${session.id}-${stamp()}.csv`, E.toCSV(session), 'text/csv'));
+$('#copy-json').addEventListener('click', () => copyText(JSON.stringify(reportWithLog(), null, 2)));
+$('#copy-csv').addEventListener('click', () => copyText(E.toCSV(session)));
+$('#new-session').addEventListener('click', () => {
+  const name = session.trainee;
+  session = new E.Session({ scenarioId: 'guided', trainee: name });
+  logHost.innerHTML = '';
+  lastDone = new Set();
+  startScenarioFresh();
+  toast('New trainee session started with guided practice.');
+});
+function startScenarioFresh() { deselect(); inspectedOnce.clear(); syncSceneToAttempt(); homeView(); showIdle('New session. ' + session.current.scenario.summary); refreshUI(true); renderTrainer(); }
+
+/* =====================================================================
+ * WEB SERIAL  (ESP32-S3, newline-delimited JSON, protocol v1)
+ * =================================================================== */
+const serial = {
+  port: null, reader: null, keep: false, lineBuf: new E.LineBuffer(), seq: new E.SeqTracker(),
+  writeChain: Promise.resolve(), lastRx: 0, hello: null, cal: {}, raw: null, rawOn: false,
+  diag: { lines: 0, actions: 0, duplicates: 0, gaps: 0, errors: {}, deviceErrors: [] },
+};
+const connChip = $('#conn-chip'), connText = $('#conn-text'), btnConnect = $('#btn-connect');
+function setConn(tone, text) { connChip.dataset.tone = tone; connText.textContent = text; }
+
+btnConnect.addEventListener('click', async () => {
+  if (serial.port) { await disconnectSerial(true); return; }
+  if (!('serial' in navigator)) {
+    setConn('warn', 'Web Serial unavailable · use keys 1–6');
+    toast('This browser has no Web Serial. Open the simulator from http://localhost in Chrome or Edge on a desktop to use the ESP32-S3.', 'warn');
+    return;
+  }
+  try {
+    const port = await navigator.serial.requestPort();
+    await openPort(port);
+  } catch (e) {
+    if (e.name === 'NotFoundError') { toast('No port selected.'); return; }
+    if (e.name === 'SecurityError') {
+      setConn('warn', 'Serial blocked here · use keys 1–6');
+      toast('Serial access is blocked in this embedded page. Run the simulator locally (see README) to connect the board.', 'warn');
+      return;
+    }
+    setConn('bad', 'Could not open port');
+    toast(`Could not open the port: ${e.message}. Close Arduino Serial Monitor or any other program using it, then try again.`, 'bad');
+  }
+});
+
+async function openPort(port) {
+  setConn('busy', 'Opening port…');
+  await port.open({ baudRate: 115200 });
+  serial.port = port; serial.keep = true; serial.lineBuf.reset(); serial.lastRx = Date.now();
+  btnConnect.textContent = 'Disconnect';
+  setConn('busy', 'Connected · waiting for device hello');
+  readLoop();
+  send({ v: 1, type: 'cmd', cmd: 'hello' });
+}
+
+async function readLoop() {
+  const decoder = new TextDecoder();
+  while (serial.port && serial.port.readable && serial.keep) {
+    serial.reader = serial.port.readable.getReader();
+    try {
+      for (;;) {
+        const { value, done } = await serial.reader.read();
+        if (done) break;
+        serial.lastRx = Date.now();
+        for (const line of serial.lineBuf.push(decoder.decode(value, { stream: true }))) handleLine(line);
+      }
+    } catch (e) {
+      // Device unplugged or reset (native USB re-enumerates on reset)
+      break;
+    } finally {
+      try { serial.reader.releaseLock(); } catch (e) {}
+    }
+  }
+  if (serial.keep) onLost();
+}
+
+function send(obj) {
+  if (EMBED) { post('send', { obj }); return; }
+  if (!serial.port || !serial.port.writable) return;
+  const data = new TextEncoder().encode(JSON.stringify(obj) + '\n');
+  serial.writeChain = serial.writeChain.then(async () => {
+    if (!serial.port || !serial.port.writable) return;
+    const w = serial.port.writable.getWriter();
+    try { await w.write(data); } finally { w.releaseLock(); }
+  }).catch(() => {});
+}
+
+function handleLine(line) {
+  serial.diag.lines++;
+  const r = E.parseLine(line);
+  if (!r.ok) {
+    if (r.error !== 'EMPTY' && r.error !== 'NOT_JSON') serial.diag.errors[r.error] = (serial.diag.errors[r.error] || 0) + 1;
+    if (r.error === 'NOT_JSON') serial.diag.errors.NOT_JSON = (serial.diag.errors.NOT_JSON || 0) + 1;
+    if (r.error === 'UNKNOWN_EVENT' || r.error === 'PAD_EVENT_MISMATCH' || r.error === 'VERSION_MISMATCH') toast(`Device message rejected (${r.error}).`, 'warn');
+    renderTrainerDiagSoon();
+    return;
+  }
+  const m = r.msg;
+  switch (m.type) {
+    case 'hello':
+      serial.hello = m; serial.seq.hello(m.boot);
+      setConn('ok', `ESP32-S3 · fw ${m.fw || '?'} · ${m.pads || 6} pads`);
+      toast(`Device ready: firmware ${m.fw || '?'}, boot ${m.boot}.`);
+      break;
+    case 'hb':
+      if (!serial.hello) send({ v: 1, type: 'cmd', cmd: 'hello' });
+      if (connChip.dataset.tone !== 'ok' && serial.hello) setConn('ok', `ESP32-S3 · fw ${serial.hello.fw || '?'} · ${serial.hello.pads || 6} pads`);
+      break;
+    case 'cal': serial.cal[m.pad] = m; break;
+    case 'raw': serial.raw = m; break;
+    case 'err':
+      serial.diag.deviceErrors.unshift({ t: new Date().toLocaleTimeString(), ...m });
+      serial.diag.deviceErrors.length = Math.min(serial.diag.deviceErrors.length, 20);
+      toast(`Device: ${m.code}${m.pad ? ' on ' + m.pad : ''}${m.msg ? ' · ' + m.msg : ''}`, 'warn');
+      break;
+    case 'action': {
+      const verdict = serial.seq.check(m);
+      if (verdict === 'duplicate') { serial.diag.duplicates++; break; }
+      if (verdict === 'gap') serial.diag.gaps++;
+      serial.diag.actions++;
+      send({ v: 1, type: 'ack', seq: m.seq, status: 'received' });
+      padPress(m.id || padFor(m.event), 'hw', m.seq);
+      break;
+    }
+  }
+  renderTrainerDiagSoon();
+}
+
+async function disconnectSerial(manual) {
+  serial.keep = false;
+  try { await serial.reader?.cancel(); } catch (e) {}
+  try { await serial.port?.close(); } catch (e) {}
+  serial.port = null; serial.hello = null;
+  btnConnect.textContent = 'Connect ESP32-S3';
+  if (manual) setConn('off', 'No device · keys 1–6 active');
+}
+function onLost() {
+  serial.port = null; serial.hello = null;
+  btnConnect.textContent = 'Connect ESP32-S3';
+  setConn('bad', 'Device lost · reconnects when plugged in');
+  toast('The ESP32-S3 disconnected. Plug it back in; the page reconnects automatically. Keys 1–6 still work.', 'bad');
+}
+if ('serial' in navigator) {
+  navigator.serial.addEventListener('connect', async e => {
+    if (serial.port) return;
+    try { await openPort(e.target); toast('ESP32-S3 reconnected.'); } catch (err) { setConn('bad', 'Reconnect failed · click Connect'); }
+  });
+  navigator.serial.addEventListener('disconnect', e => { if (serial.port === e.target) { serial.keep = false; onLost(); } });
+  // Re-open a previously granted port on page load (no picker needed).
+  navigator.serial.getPorts().then(ports => { if (ports.length === 1 && !serial.port) openPort(ports[0]).catch(() => {}); }).catch(() => {});
+}
+setInterval(() => {
+  if (serial.port && serial.hello && Date.now() - serial.lastRx > 6000) setConn('warn', `No data for ${Math.round((Date.now() - serial.lastRx) / 1000)} s · check cable`);
+}, 1000);
+
+function diagHTML() {
+  const d = serial.diag;
+  const errs = Object.entries(d.errors).map(([k, v]) => `${k} ${v}`).join(' · ') || 'none';
+  const cal = Object.values(serial.cal);
+  const meters = serial.raw && Array.isArray(serial.raw.vals) ? `<div class="meters">${serial.raw.vals.map((v, i) => {
+    const c = serial.cal['T' + (i + 1)] || {};
+    const max = Math.max(v, (c.thr || v) * 1.3, 1);
+    return `<div class="meter">T${i + 1} · ${v}<div class="bar"><i style="width:${Math.min(100, (v / max) * 100)}%"></i>${c.thr ? `<b style="left:${Math.min(100, (c.thr / max) * 100)}%"></b>` : ''}</div></div>`;
+  }).join('')}</div>` : '';
+  return `<div class="tbl-wrap"><table class="data"><tbody>
+    <tr><td>Connection</td><td>${esc(connText.textContent)}</td></tr>
+    <tr><td>Firmware / boot id</td><td class="mono">${serial.hello ? esc(serial.hello.fw + ' / ' + serial.hello.boot) : '—'}</td></tr>
+    <tr><td>Lines received · actions · duplicates dropped · sequence gaps</td><td class="mono">${d.lines} · ${d.actions} · ${d.duplicates} · ${d.gaps}</td></tr>
+    <tr><td>Rejected lines</td><td class="mono">${esc(errs)}</td></tr>
+    <tr><td>Calibration</td><td class="mono">${cal.length ? cal.map(c => `${esc(c.pad)} base ${c.base} thr ${c.thr} σ ${c.sd}`).join('<br>') : 'Not received yet'}</td></tr>
+    <tr><td>Device errors</td><td class="mono">${d.deviceErrors.length ? d.deviceErrors.slice(0, 5).map(x => esc(`${x.t} ${x.code} ${x.pad || ''}`)).join('<br>') : 'none'}</td></tr>
+  </tbody></table></div>
+  <div class="actions" style="margin-top:8px">
+    <button class="btn small" type="button" id="dg-raw" ${deviceLinked() ? '' : 'disabled'}>${serial.rawOn ? 'Stop raw values' : 'Stream raw values'}</button>
+    <button class="btn small" type="button" id="dg-recal" ${deviceLinked() ? '' : 'disabled'}>Recalibrate (hands off pads)</button>
+  </div>${meters}`;
+}
+function bindDiag() {
+  $('#dg-raw')?.addEventListener('click', () => { serial.rawOn = !serial.rawOn; send({ v: 1, type: 'cmd', cmd: serial.rawOn ? 'raw_on' : 'raw_off' }); renderTrainer(); });
+  $('#dg-recal')?.addEventListener('click', () => { send({ v: 1, type: 'cmd', cmd: 'recal' }); toast('Recalibrating. Keep hands off the pads for 2 seconds.'); });
+}
+let diagTimer = null;
+function renderTrainerDiagSoon() {
+  if (!ui.trainerOpen || diagTimer) return;
+  diagTimer = setTimeout(() => { diagTimer = null; if (ui.trainerOpen && !document.activeElement?.closest('#trainer-body')) renderTrainer(); }, 400);
+}
+
+/* =====================================================================
+ * KEYBOARD
+ * =================================================================== */
+window.addEventListener('keydown', e => {
+  if (e.target && e.target.closest && e.target.closest('input, textarea, select')) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (/^[1-6]$/.test(k)) { if (e.repeat) return; e.preventDefault(); padPress('T' + k, 'kbd'); return; }
+  if (k === 'escape') { if (!$('#complete').hidden) closeModal(); else if (ui.trainerOpen) closeTrainer(); else deselect(); return; }
+  if (k === 't') { ui.trainerOpen ? closeTrainer() : openTrainer(); return; }
+  if (k === 'c') { homeView(); return; }
+  if (k === 'l') { $('#btn-labels').click(); return; }
+});
+
+/* ---------- viewport tools ---------- */
+$('#btn-cam').addEventListener('click', () => homeView());
+$('#btn-labels').addEventListener('click', e => {
+  ui.labels = !ui.labels;
+  e.currentTarget.setAttribute('aria-pressed', ui.labels);
+  for (const id in objs) objs[id].tag.visible = ui.labels && objs[id].group.visible;
+});
+$('#btn-zones').addEventListener('click', e => {
+  ui.zones = !ui.zones;
+  e.currentTarget.setAttribute('aria-pressed', ui.zones);
+  zoneGroup.visible = ui.zones;
+});
+
+/* ---------- refresh ---------- */
+function refreshUI(fresh) {
+  renderRail(fresh);
+  renderScore();
+  renderInspector(false);
+  updateItemTags();
+  drawConsole();
+  renderTrainer();
+}
+
+/* =====================================================================
+ * BOOT
+ * =================================================================== */
+syncSceneToAttempt();
+showIdle('Standard pre-scan loaded. Inspect the suite, then use the pads (or keys 1–6) to sign off each checkpoint.');
+refreshUI(true);
+requestAnimationFrame(animate);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { drawConsole(); });
+homeView(D(2.4));
+// Entrance motion moves panels only; they stay readable from the first frame.
+gsap.from(['.rail', '.side > .panel', '.pads'], { y: 12, duration: D(0.7), stagger: D(0.07), ease: 'power3.out', clearProps: 'transform' });
+gsap.from('.pad', { y: 6, duration: D(0.5), stagger: D(0.04), delay: D(0.2), ease: 'power2.out', clearProps: 'transform' });
+/* =====================================================================
+ * EMBED BRIDGE — the MRISafe Twin shell owns the USB link and the AI assistant
+ * =================================================================== */
+function deviceLinked() { return EMBED ? bridge.linked : !!serial.port; }
+let lastAiContext = null;
+function aiContextFor(o, attempt) {
+  return {
+    scenario: attempt.scenario.title, attempt: attempt.attemptNo, score: attempt.score(),
+    violations: o.violations.map(v => ({ rule: v.rule, severity: v.severity, title: v.title, evidence: v.evidence, why: v.why, corrective: v.corrective, basis: v.basis })),
+    recent: attempt.log.slice(-8).map(x => ({ n: x.n, t: fmtT(x.at), source: x.src, event: x.event, target: x.target, value: x.value, accepted: x.accepted, checkpoint: x.checkpointCompleted, violations: x.violations.map(v => v.rule) })),
+  };
+}
+function debriefContext(attempt, rec) {
+  const s = attempt.summary();
+  const seen = new Set();
+  const viol = attempt.violations().filter(v => { const k = v.rule + v.subject; if (seen.has(k)) return false; seen.add(k); return true; })
+    .map(v => ({ rule: v.rule, severity: v.severity, title: v.title, evidence: v.evidence }));
+  return {
+    scenario: s.scenarioTitle, attempt: s.attemptNo, status: s.status, completed: s.completed, passed: s.passed, score: s.score,
+    passRule: `score ≥ ${E.SCORING.passMinScore} and no critical violations`, criticalCount: s.criticalCount,
+    durationSec: Math.round(s.durationMs / 1000), correctActions: s.correctActions, actionsWithViolation: s.incorrectActions,
+    retriesThisScenario: session.retriesFor(attempt.scenarioId),
+    checkpoints: Object.fromEntries(Object.entries(s.checkpoints).map(([k, c]) => [E.CHECKPOINTS[k].title, { status: c.status, incorrectAttempts: c.incorrect }])),
+    violations: viol,
+    recommendation: rec ? { next: E.SCENARIOS[rec.scenarioId].title, rule: rec.rule, reason: rec.reason } : null,
+  };
+}
+if (EMBED) {
+  $('#ai-debrief').hidden = false;
+  $('#ai-debrief').addEventListener('click', () => post('ask-ai', { task: 'debrief', context: debriefContext(session.current, session.recommendations[session.recommendations.length - 1]) }));
+}
+/* virtual cursor driven by the controller's tilt */
+const vc = { on: false, x: 0, y: 0, el: $('#vcursor') };
+function setVCursor(on) {
+  vc.on = on; vc.el.hidden = !on;
+  if (on) { const r = viewport.getBoundingClientRect(); vc.x = r.width / 2; vc.y = r.height / 2; moveVCursor(0, 0); }
+  else { pointerInside = false; pointerDirty = true; }
+}
+function moveVCursor(dx, dy) {
+  if (!vc.on) return;
+  const r = viewport.getBoundingClientRect();
+  vc.x = clampN(vc.x + dx, 6, r.width - 6); vc.y = clampN(vc.y + dy, 6, r.height - 6);
+  vc.el.style.left = vc.x + 'px'; vc.el.style.top = vc.y + 'px';
+  pointer.set((vc.x / r.width) * 2 - 1, -(vc.y / r.height) * 2 + 1);
+  lastPointer = { x: vc.x, y: vc.y }; pointerInside = true; pointerDirty = true;
+}
+function clampN(v, a, b) { return Math.min(b, Math.max(a, v)); }
+function vTap() {
+  if (!vc.on) { toast('Flick the controller to switch to point mode, then tilt to aim and tap to select.'); return; }
+  const r = viewport.getBoundingClientRect();
+  pointer.set((vc.x / r.width) * 2 - 1, -(vc.y / r.height) * 2 + 1);
+  const id = pickAt();
+  if (id) select(id); else deselect();
+  gsap.fromTo(vc.el, { scale: 1.6 }, { scale: 1, duration: D(0.3) });
+}
+/* hand pointer (from the shell's MediaPipe tracker): the fingertip places the cursor directly */
+let handCursor = false;
+function handPointer(d) {
+  if (!d.visible) { if (handCursor) { handCursor = false; setVCursor(false); } return; }
+  if (!vc.on) setVCursor(true);
+  handCursor = true;
+  const r = viewport.getBoundingClientRect();
+  vc.x = clampN(d.x * r.width, 6, r.width - 6); vc.y = clampN(d.y * r.height, 6, r.height - 6);
+  vc.el.style.left = vc.x + 'px'; vc.el.style.top = vc.y + 'px';
+  pointer.set((vc.x / r.width) * 2 - 1, -(vc.y / r.height) * 2 + 1);
+  lastPointer = { x: vc.x, y: vc.y }; pointerInside = true; pointerDirty = true;
+}
+const _sph = new THREE.Spherical();
+function orbitBy(dAz, dEl) {
+  if (camTween) { camTween.kill(); camTween = null; }
+  const off = camera.position.clone().sub(controls.target);
+  _sph.setFromVector3(off);
+  _sph.theta += dAz;
+  _sph.phi = clampN(_sph.phi - dEl, 0.15, controls.maxPolarAngle);
+  off.setFromSpherical(_sph);
+  camera.position.copy(controls.target).add(off);
+}
+function zoomBy(dz) {
+  // dz > 0 is a zoom in (palms apart). Distance scales exponentially so the feel is even at any range.
+  if (camTween) { camTween.kill(); camTween = null; }
+  const off = camera.position.clone().sub(controls.target);
+  off.setLength(clampN(off.length() * Math.exp(-dz * 1.3), controls.minDistance, controls.maxDistance));
+  camera.position.copy(controls.target).add(off);
+}
+window.addEventListener('message', e => {
+  if (e.origin !== location.origin || !e.data || e.data.mrisafe !== 1) return;
+  const d = e.data;
+  switch (d.kind) {
+    case 'line': handleLine(d.line); break;
+    case 'device':
+      bridge.linked = !!d.linked;
+      if (!d.linked) { serial.hello = null; setConn('off', 'No device · keys 1–6 active'); }
+      renderTrainerDiagSoon();
+      break;
+    case 'orbit': orbitBy(d.dAz || 0, d.dEl || 0); break;
+    case 'zoom': zoomBy(+d.dz || 0); break;
+    case 'pointer': moveVCursor(d.dx || 0, d.dy || 0); break;
+    case 'imu-mode': setVCursor(d.mode === 'point'); break;
+    case 'tap': vTap(); break;
+    case 'hand-pos': handPointer(d); break;
+    case 'hand-tap': if (handCursor) vTap(); break;
+    case 'reset-view': homeView(); break;
+    case 'visible': ui.paused = !d.visible; break;
+    case 'key': window.dispatchEvent(new KeyboardEvent('keydown', { key: d.key })); break;
+    case 'get-debrief': post('debrief-context', { context: debriefContext(session.current, session.recommendations[session.recommendations.length - 1]) }); break;
+    case 'get-violation': post('violation-context', { context: lastAiContext }); break;
+  }
+});
+post('ready', { page: 'train' });
+window.__mrisafe = { session: () => session, dispatch, padPress, handleLine, orbitBy, zoomBy, setVCursor, moveVCursor, vTap, camDistance: () => camera.position.distanceTo(controls.target) };
+</script>
+</body>
+</html>
